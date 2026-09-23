@@ -6,12 +6,18 @@ AI漫剧智能体工作流 · 一致性校验工具
 
 用途：改动本技能库后跑一次，自动检出「看起来对、实际不一致」的问题。
 
-覆盖 5 类检查：
-  1. 引用完整性 —— 路径式引用是否指向真实文件（断链）
+覆盖 11 类检查：
+  1. 引用完整性 —— 路径式引用是否指向真实文件（断链 / 旧模块编号残留）
   2. 机制覆盖   —— 某机制的关键词是否在它该出现的所有文件里都出现了
   3. 禁用前缀   —— 已废弃的 ID 前缀是否残留（SHOT_ / SCN_ / SHO_ / MUS_EP）
   4. 口径一致   —— 同一数字口径（十类 / 八法）是否跨文件一致
   5. 交付包字段 —— 各模块交付包是否含 ID 与未决项字段
+  6. 素材完整性 —— 规格原文 / 源 skill / 模板是否被误删
+  7. 文本完整性 —— 全角括号配平 + 损坏指纹（防字符级替换事故）
+  8. 数字声明   —— 文档里的体积 / 行数 / 个数 / 总量是否过时
+  9. 目录树一致性 —— README 里画的树是否与实际文件对得上
+ 10. 结构引用一致性 —— `【0N 模块名】` 编号 与 `文件.md §X` 章节引用能否解析
+ 11. 共享表头一致性 —— 同一张表在多处的表头是否逐字相同
 
 用法：
     python 工具/校验.py              # 全量检查
@@ -419,6 +425,23 @@ MECHANISM_RULES = [
             "01-剧本文本/01-工业化编剧引擎.md",
         ],
     },
+    # 自检的「检查数」口径 —— 这个数字已漂过 5→6→7→8→9→11，
+    # 每次加检查都要手工 grep 全库改一遍；加规则把它钉住。
+    {
+        "name": "自检检查数口径（工具 README）",
+        "keyword": "十一类检查",
+        "must_in": ["工具/README.md"],
+    },
+    {
+        "name": "自检检查数口径（根 README · 目录树）",
+        "keyword": "11 类一致性检查",
+        "must_in": ["README.md"],
+    },
+    {
+        "name": "自检检查数口径（根 README · 质量守则）",
+        "keyword": "自动检出 11 类问题",
+        "must_in": ["README.md"],
+    },
 ]
 
 # 禁用前缀：pattern 命中即失败，除豁免文件外
@@ -592,6 +615,53 @@ REQUIRED_DIR_MIN = [
 
 
 # ─────────────────────────────────────────────────────────────
+# 检查 10 的规则：模块名 → 目录编号
+# ─────────────────────────────────────────────────────────────
+# 权威口径：**编号 = 执行顺序**（v39 重编号）。
+# 文档里写 `【05 剧本文本】` 这类旧编号，会把人指到错误的模块 —— 而这是纯文字，检查 1/9 都抓不到。
+MODULE_NUMBERS = {
+    "剧本文本": 1, "服化道": 2, "分镜导演": 3,
+    "视频生成": 4, "音乐音频": 5, "合规审核": 6,
+}
+
+# v38 → v39 重编号的**旧编号映射**（历史事实，一次性的；用于给「旧编号残留」精确建议）
+# 出处：`git ls-tree -d 09678d5^:AI漫剧智能体工作流` → 01-分镜导演 / 03-视频生成 /
+#       04-音乐音频 / 05-剧本文本（02 服化道、06 合规审核 未变）
+LEGACY_MODULE_MAP = {
+    "01": "分镜导演", "03": "视频生成", "04": "音乐音频", "05": "剧本文本",
+}
+
+# ─────────────────────────────────────────────────────────────
+# 检查 11 的规则：必须跨文件**完全一致**的表头
+# ─────────────────────────────────────────────────────────────
+# 同一张表在多个文件里重复定义时，改了一处忘另一处 → 用户复制到旧格式。
+# 这正是本项目第一号坑（见根 README §五·4「改权威层必须同步实体层」）。
+SHARED_TABLE_HEADERS = [
+    {
+        "name": "九列标准分镜表",
+        "cells": ["镜号", "景别", "摄影角度", "运镜", "画面内容", "声音",
+                  "时长", "叙事目的", "备注"],
+        "files": [
+            "03-分镜导演/主工作流/storyboard-director-pro.md",
+            "03-分镜导演/分镜导演-完整合并版.md",
+            "示例演示/01-全流程走通.md",
+        ],
+        "note": "来源是 `03-分镜导演/源skill/director-master.md`；改列必须先改来源再同步这三处",
+    },
+    {
+        "name": "模块 ID 分配表",
+        "cells": ["段", "谁分配", "本模块能否新建"],
+        "files": [
+            "02-服化道/README.md",
+            "03-分镜导演/主工作流/storyboard-director-pro.md",
+            "03-分镜导演/分镜导演-完整合并版.md",
+        ],
+        "note": "ID 交接协议的口径，三处必须一致",
+    },
+]
+
+
+# ─────────────────────────────────────────────────────────────
 # 2. 工具函数
 # ─────────────────────────────────────────────────────────────
 
@@ -615,6 +685,25 @@ def read(path):
         return ""
 
 
+def file_kb(path):
+    """文件体积（KB）—— **按 LF 归一化后计算**。
+
+    为什么不能直接用 `os.path.getsize`（2026-09-23 实测踩到）：
+      `.gitattributes` 声明 `* text=auto eol=lf`（行尾恒为 LF），但工作区里**大量文件
+      实际是 CRLF** —— 两个来源：
+        ① 从源仓库抓取时原样保留了 CRLF
+        ② 工具/脚本写入时被 Python 的**默认换行翻译**悄悄改掉
+           （读 `\\r\\n`→`\\n`，写 `\\n`→`os.linesep`=`\\r\\n`；`git diff` 因
+             `.gitattributes` 归一化而**看不见**这个改动 —— 典型的静默漂移）
+      CRLF 版本比 LF 版本大「行数」个字节：**700 行 = +0.68 KB**，
+      足以让「体积声明」被误判为过时。
+
+    故统一按归一化后的字节数度量：与 `.gitattributes` 口径一致，也不受工作区行尾漂移影响。
+    """
+    text = read(path)
+    return len(text.encode("utf-8")) / 1024 if text else os.path.getsize(path) / 1024
+
+
 def match_glob(rel, pattern):
     """极简 glob：仅支持 * 通配，按目录前缀匹配。"""
     if pattern.endswith("/*"):
@@ -630,6 +719,7 @@ def check_references(files):
     """检查 1：路径式引用（含 / 的 .md/.yaml）是否指向真实文件。"""
     failures = []
     all_basenames = {os.path.basename(ap) for ap, _ in files}
+    TOP_DIRS = [d for d in os.listdir(ROOT) if os.path.isdir(os.path.join(ROOT, d))]
 
     # 只抓反引号内的路径式引用
     ref_re = re.compile(r"`([^`\n|]*?/[^`\n|]*?\.(?:md|yaml|yml))`")
@@ -653,6 +743,30 @@ def check_references(files):
             # 源 skill 内嵌 references 章节
             if any(norm.startswith(p) for p in EMBEDDED_PREFIXES):
                 continue
+            # ── 特例：首段是**裸模块号**（`04/...`）──
+            # v39 把模块目录从 `04` 改名为 `04-视频生成`，于是「旧编号 + 路径」成了
+            # 最高发残留形态：`04/_规格原文/README.md`。
+            # 这类**必须严格**——因为下面的「裸文件名兜底」会把它放过去
+            # （只因「别处存在某个 README.md」），旧版就是这样把它隐藏了许久。
+            # 判定：把 `0N/` 换成真实模块目录 `0N-xxx/` 后仍不存在 → 报。
+            m_mod = re.match(r"^(0\d)/", norm)
+            if m_mod:
+                old_no = m_mod.group(1)
+                rest = norm.split("/", 1)[1]
+                mod_dir = next((d for d in TOP_DIRS if d.startswith(old_no + "-")), None)
+                if not (mod_dir and os.path.exists(os.path.join(ROOT, mod_dir, rest))):
+                    legacy = LEGACY_MODULE_MAP.get(old_no)
+                    hint = f"旧编号 {old_no} = {legacy} → 现 " \
+                           f"{MODULE_NUMBERS[legacy]:02d}-{legacy}/{rest}" if legacy \
+                        else f"模块编号 {old_no} 下无此路径"
+                    failures.append({
+                        "rule": "断链引用（模块编号可能过时）",
+                        "file": rel, "line": text[: m.start()].count("\n") + 1,
+                        "text": f"引用 `{ref}`",
+                        "should_be": hint,
+                    })
+                continue
+
             # 相对本文件解析
             cand1 = os.path.normpath(os.path.join(os.path.dirname(ap), ref))
             # 相对项目根解析
@@ -916,8 +1030,8 @@ def check_numeric_claims(files):
 
     local_paths = [ap for ap, _ in files]
     local_cnt = len([ap for ap in local_paths if ap.endswith((".md", ".yaml"))])
-    local_kb = sum(os.path.getsize(ap) for ap in local_paths
-                   if ap.endswith((".md", ".yaml"))) / 1024
+    local_kb = sum(file_kb(ap) for ap in local_paths
+                   if ap.endswith((".md", ".yaml")))
 
     KB = re.compile(r"`([^`\n]+\.(?:md|py|yaml))`\s*[|｜]\s*\**\s*([0-9]+(?:\.[0-9])?)\s*KB")
     LN = re.compile(r"([0-9]{2,5})\s*行")
@@ -951,7 +1065,7 @@ def check_numeric_claims(files):
             line = line_text(t, m.start())
             if name not in uniq or "→" in line or is_before_after(line, KB_NUM):
                 continue
-            real = os.path.getsize(uniq[name]) / 1024
+            real = file_kb(uniq[name])
             if abs(real - kb) > 0.6:
                 failures.append({
                     "rule": f"体积声明过时（{name}）", "file": rel,
@@ -1085,6 +1199,188 @@ def check_trees(files):
     return failures
 
 
+CN_NUMS = "一二三四五六七八九十"
+
+
+def _cn_to_int(s):
+    """'一'→1 … '十'→10（本项目的章节号不超过十）"""
+    s = s.strip()
+    if s.isdigit():
+        return int(s)
+    return CN_NUMS.index(s) + 1 if s in CN_NUMS else None
+
+
+def _headings(text):
+    """抽出章节号集合与子节全号集合。
+
+    项目里**两种标题风格并存**，必须都认：
+      `## 五、光影设计的三个来源与分工`   （中文数字 + 、）
+      `### 5.5 动作戏原则`               （阿拉伯 + 点）
+    """
+    secs, subs = set(), defaultdict(set)
+    for l in text.splitlines():
+        # ⚠️ 必须先认「多级点号编号」：否则 `### 3.5` 会被下面那条「章号 + 分隔符」
+        #    规则抢走（读成「第 3 章 · 分隔符 . · 标题 5」），子节表就全空了
+        m = re.match(r"^#{1,4}\s+§?\s*([0-9]+(?:\.[0-9]+)+)\s+\S", l)
+        if m:
+            full = m.group(1)
+            secs.add(int(full.split(".")[0]))
+            subs[int(full.split(".")[0])].add(full)
+            continue
+        m2 = re.match(r"^#{1,4}\s+§?\s*([0-9" + CN_NUMS + r"]+)\s*[、.．·]\s*\S", l)
+        if m2:
+            n = _cn_to_int(m2.group(1))
+            if n:
+                secs.add(n)
+    return secs, subs
+
+
+def check_structural_refs(files):
+    """检查 10：结构引用一致性 —— 「手写的结构引用」能否解析到真实位置。
+
+    背景（2026-09-23，检查 9 之后紧接着发现的**同类盲区**）：
+      检查 9 覆盖了「README 的目录树」，但文档里还有两类**手写结构引用**同样无人检查：
+        ① `【0N 模块名】` —— 流程图/正文里的模块编号
+           v39 把模块重编号为「**编号 = 执行顺序**」（01 剧本文本 … 06 合规审核）。
+           旧编号若残留（如 `【05 剧本文本】`），会把人指到**错误的模块**——而这是纯文字，
+           检查 1（路径引用）和检查 9（目录树）都抓不到。
+        ② `文件.md §X` —— 章节引用（文件改名 / 章节重排后失效）
+
+    ⚠️ 收窄规则（5 条，全部是实测踩出来的，缺一即误报；首版一次误报 16 处）：
+      a. **`§` 必须紧跟文件名（间隔 ≤2 字符）** —— 项目里有「覆盖度标注」写法：
+         `` `PROJECT-PIPELINE.md` 生产流水线（§25 §26 §41）``，其中 §25 指的是
+         **规格原文**的节号，不是该引擎文件的第 25 章
+      b. **取 `§` 前面「最近」的 .md** —— `` `A.md` + `B.md` §1.5 `` 的 § 指 B 不指 A
+      c. **非模块引用要排除** —— `【01 声音设计引擎】` 是模块**内部**引擎文件的序号，
+         不是顶层模块；只在名称命中 `MODULE_NUMBERS` 时才校验
+      d. **两种标题风格都要认**（见 `_headings`），且先认多级点号编号
+      e. **目标文件找不到时交给检查 1**，此处不报（避免与检查 1 重复报同一问题）
+    """
+    failures = []
+
+    # ① `【0N 模块名】` 的编号是否与模块目录号一致
+    for ap, rel in files:
+        text = read(ap)
+        if not text:
+            continue
+        for m in re.finditer(r"【\s*0?(\d{1,2})\s*-?\s*([^】]+)】", text):
+            num = int(m.group(1))
+            name = re.sub(r"^(本模块|模块)", "", m.group(2).strip()).strip()
+            hit = next((k for k in MODULE_NUMBERS if k in name), None)
+            if hit is None:
+                continue                       # 规则 c
+            if MODULE_NUMBERS[hit] != num:
+                failures.append({
+                    "rule": f"模块编号错误「【{m.group(1)} {name}】」",
+                    "file": rel,
+                    "line": text[:m.start()].count("\n") + 1,
+                    "text": m.group(0),
+                    "should_be": f"0{MODULE_NUMBERS[hit]}（该模块现编号）",
+                })
+
+    # ② `文件.md §X` 的章节是否存在
+    # 规则 f：兜底解析**只用全库唯一的 basename** —— `README.md` / `00-主控智能体.md`
+    #         这类名字在多个目录都有，无法判断指哪一个，强行解析必然指错（同检查 8 的教训）
+    by_base = defaultdict(list)
+    for ap, rel in files:
+        by_base[os.path.basename(ap)].append(ap)
+    uniq_base = {b: v[0] for b, v in by_base.items() if len(v) == 1}
+    head_cache = {}
+
+    for ap, rel in files:
+        text = read(ap)
+        if not text:
+            continue
+        for i, line in enumerate(text.splitlines(), 1):
+            for sm in re.finditer(
+                    r"§\s*([0-9" + CN_NUMS + r"]+)\s*[·.．]?\s*([0-9]+(?:\.[0-9]+)*)?", line):
+                head = line[:sm.start()]
+                cands = list(re.finditer(r"([\w\-/\.]+\.md)", head))
+                if not cands:
+                    continue
+                last = cands[-1]                # 规则 b
+                if len(head) - last.end() > 2:  # 规则 a
+                    continue
+                sec_raw, sub = sm.group(1), sm.group(2)
+                if sub and sec_raw.isdigit() and "." not in sub:
+                    sub = f"{sec_raw}.{sub}"    # §4.2 → sec='4'/sub='2' → 全号 '4.2'
+                n = _cn_to_int(sec_raw)
+                if n is None:
+                    break
+                tgt = os.path.normpath(os.path.join(os.path.dirname(ap), last.group(1)))
+                if not os.path.exists(tgt):
+                    tgt = uniq_base.get(os.path.basename(last.group(1)))
+                    if not tgt:
+                        break                   # 规则 e / f
+                tgt = os.path.normpath(tgt)
+                if tgt not in head_cache:
+                    head_cache[tgt] = _headings(read(tgt))
+                secs, subs = head_cache[tgt]
+                trel = os.path.relpath(tgt, ROOT).replace("\\", "/")
+                if n not in secs:
+                    failures.append({
+                        "rule": f"章节引用失效「{os.path.basename(last.group(1))} §{sec_raw}」",
+                        "file": rel, "line": i,
+                        "text": line.strip()[:100],
+                        "should_be": f"{trel} 中无第 {n} 章",
+                    })
+                elif sub and sub not in subs.get(n, set()):
+                    failures.append({
+                        "rule": f"子节引用失效「{os.path.basename(last.group(1))} §{sec_raw}·{sub}」",
+                        "file": rel, "line": i,
+                        "text": line.strip()[:100],
+                        "should_be": f"{trel} 中无 {sub} 子节",
+                    })
+                break
+    return failures
+
+
+def _norm_header(s):
+    return re.sub(r"\s+", "", s.strip())
+
+
+def check_shared_headers(files):
+    """检查 11：共享表头一致性 —— 同一张表在多个文件里的表头必须逐字相同。
+
+    背景（2026-09-23）：
+      「九列标准分镜表」的表头在**三处**重复定义（工作流 / 可部署合并版 / 实跑示例），
+      「模块 ID 分配表」在三处重复。它们靠**人工保持一致**——而这是本项目第一号坑：
+
+        改权威层却漏了实体层 → 用户复制到的仍是被取代的旧格式
+
+      尤其 `分镜导演-完整合并版.md` 是**部署首选**（用户就是复制它的），
+      它若没同步，用户拿到的列结构就是旧的。检查 2「机制覆盖」只能验证**关键词在不在**，
+      无法验证**表头是否逐字相同**，故单列此项。
+
+    口径：只认「表头行 + 紧随其后是分隔行」的**真表格**；比较时忽略空白差异。
+    规则表见文件顶部 `SHARED_TABLE_HEADERS`。
+    """
+    contents = {rel: read(ap) for ap, rel in files}
+    failures = []
+
+    for rule in SHARED_TABLE_HEADERS:
+        want = "| " + " | ".join(rule["cells"]) + " |"
+        for f in rule["files"]:
+            text = contents.get(f)
+            if text is None:
+                failures.append({"rule": f"共享表「{rule['name']}」", "file": f, "line": 0,
+                                 "text": "文件不存在", "should_be": want})
+                continue
+            ls = text.splitlines()
+            headers = []
+            for i, l in enumerate(ls[:-1]):
+                if l.strip().startswith("|") and re.match(r"^\|[\s:|-]+\|\s*$", ls[i + 1]):
+                    headers.append(l)
+            if not any(_norm_header(h) == _norm_header(want) for h in headers):
+                failures.append({
+                    "rule": f"共享表头不一致「{rule['name']}」",
+                    "file": f, "line": 0,
+                    "text": f"未找到表头 {want}",
+                    "should_be": f"{want}　（{rule['note']}）",
+                })
+    return failures
+
+
 CHECKS = [
     ("引用完整性", check_references, "路径式引用是否指向真实文件"),
     ("机制覆盖", check_mechanisms, "机制关键词是否在应出现处都出现"),
@@ -1095,6 +1391,8 @@ CHECKS = [
     ("文本完整性", check_text_integrity, "全角括号配平与损坏指纹（防字符级替换事故）"),
     ("数字声明", check_numeric_claims, "文档里的体积/行数/个数/总量是否过时"),
     ("目录树一致性", check_trees, "README 里画的树是否与实际文件对得上"),
+    ("结构引用一致性", check_structural_refs, "模块编号【0N xxx】与章节引用 §X 能否解析"),
+    ("共享表头一致性", check_shared_headers, "同一张表在多处的表头是否逐字相同"),
 ]
 
 
@@ -1113,9 +1411,9 @@ def print_sizes(files):
                     "01-工业化编剧引擎.md",
                     "01-声音设计引擎.md", "02-Suno歌词引擎.md",
                     "ID-REGISTRY.md", "OPEN-ISSUES.md"):
-            targets.append((rel, os.path.getsize(ap)))
+            targets.append((rel, file_kb(ap)))
     for rel, size in sorted(targets):
-        print(f"| `{rel}` | {size / 1024:.1f} KB |")
+        print(f"| `{rel}` | {size:.1f} KB |")
     print()
     print(f"合计 {len(targets)} 个文件 ｜ 全库 {len(files)} 个文件，"
           f"{sum(os.path.getsize(ap) for ap, _ in files) / 1024:.1f} KB")
@@ -1135,7 +1433,7 @@ def main():
 
     if "--sizes" in argv:
         return print_sizes(files)
-    total_bytes = sum(os.path.getsize(ap) for ap, _ in files)
+    total_bytes = sum(file_kb(ap) for ap, _ in files) * 1024
 
     print("=" * 66)
     print("AI漫剧智能体工作流 · 一致性校验")
