@@ -492,6 +492,22 @@ MECHANISM_RULES = [
             "01-剧本文本/01-工业化编剧引擎.md",
         ],
     },
+    # ── G8：G5 的第一版口径本身是错的（补丁也要真跑验证）──
+    {
+        "name": "G8 换算口径标注「待校准」",
+        "keyword": "属待校准值",
+        "must_in": [
+            "01-剧本文本/01-工业化编剧引擎.md",
+        ],
+    },
+    {
+        "name": "01 端到端参照样例（分集大纲）",
+        "keyword": "端到端参照样例",
+        "must_in": [
+            "01-剧本文本/示例演示/02-最后的希望-EP01-EP04分集大纲.md",
+            "01-剧本文本/README.md",
+        ],
+    },
 
     # 自检的「检查数」口径 —— 这个数字已漂过 5→6→7→8→9→11，
     # 每次加检查都要手工 grep 全库改一遍；加规则把它钉住。
@@ -678,7 +694,7 @@ REQUIRED_DIR_MIN = [
     ("05-音乐音频/_规格原文", 3, "规格原文归档"),
     ("05-音乐音频/示例演示", 1, "引擎实跑验证示例"),
     ("01-剧本文本/模板", 3, "剧本模板（含 ID/未决项）"),
-    ("01-剧本文本/示例演示", 1, "工业化编剧引擎实跑验证"),
+    ("01-剧本文本/示例演示", 2, "引擎实跑验证 + 分集大纲参照样例"),
     ("示例演示", 2, "端到端示例"),
 ]
 
@@ -1443,8 +1459,12 @@ def check_structural_refs(files):
                 if len(head) - last.end() > 2:  # 规则 a
                     continue
                 sec_raw, sub = sm.group(1), sm.group(2)
-                if sub and sec_raw.isdigit() and "." not in sub:
-                    sub = f"{sec_raw}.{sub}"    # §4.2 → sec='4'/sub='2' → 全号 '4.2'
+                # 子节号还原为**全号**：
+                #   §4.2    → sec='4' / sub='2'   → '4.2'
+                #   §5.4.1  → sec='5' / sub='4.1' → '5.4.1'（子号已带点也要补章号）
+                #   §五·5.5 → sec='五'（非数字）→ sub 本身已是全号，不动
+                if sub and sec_raw.isdigit() and not sub.startswith(sec_raw + "."):
+                    sub = f"{sec_raw}.{sub}"
                 n = _cn_to_int(sec_raw)
                 if n is None:
                     break
@@ -1467,7 +1487,8 @@ def check_structural_refs(files):
                     })
                 elif sub and sub not in subs.get(n, set()):
                     failures.append({
-                        "rule": f"子节引用失效「{os.path.basename(last.group(1))} §{sec_raw}·{sub}」",
+                        # sub 已是全号（如 '5.4.1'），不要再拼 sec_raw，否则成「§5·5.4.1」
+                        "rule": f"子节引用失效「{os.path.basename(last.group(1))} §{sub}」",
                         "file": rel, "line": i,
                         "text": line.strip()[:100],
                         "should_be": f"{trel} 中无 {sub} 子节",
