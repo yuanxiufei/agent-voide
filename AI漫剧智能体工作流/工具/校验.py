@@ -6,7 +6,7 @@ AI漫剧智能体工作流 · 一致性校验工具
 
 用途：改动本技能库后跑一次，自动检出「看起来对、实际不一致」的问题。
 
-覆盖 11 类检查：
+覆盖 12 类检查：
   1. 引用完整性 —— 路径式引用是否指向真实文件（断链 / 旧模块编号残留）
   2. 机制覆盖   —— 某机制的关键词是否在它该出现的所有文件里都出现了
   3. 禁用前缀   —— 已废弃的 ID 前缀是否残留（SHOT_ / SCN_ / SHO_ / MUS_EP）
@@ -18,6 +18,7 @@ AI漫剧智能体工作流 · 一致性校验工具
   9. 目录树一致性 —— README 里画的树是否与实际文件对得上
  10. 结构引用一致性 —— `【0N 模块名】` 编号 与 `文件.md §X` 章节引用能否解析
  11. 共享表头一致性 —— 同一张表在多处的表头是否逐字相同
+ 12. 档位声明一致性 —— frontmatter 声明的档位是否与本文档章节标题一致
 
 用法：
     python 工具/校验.py              # 全量检查
@@ -429,17 +430,17 @@ MECHANISM_RULES = [
     # 每次加检查都要手工 grep 全库改一遍；加规则把它钉住。
     {
         "name": "自检检查数口径（工具 README）",
-        "keyword": "十一类检查",
+        "keyword": "十二类检查",
         "must_in": ["工具/README.md"],
     },
     {
         "name": "自检检查数口径（根 README · 目录树）",
-        "keyword": "11 类一致性检查",
+        "keyword": "12 类一致性检查",
         "must_in": ["README.md"],
     },
     {
         "name": "自检检查数口径（根 README · 质量守则）",
-        "keyword": "自动检出 11 类问题",
+        "keyword": "自动检出 12 类问题",
         "must_in": ["README.md"],
     },
 ]
@@ -1199,6 +1200,78 @@ def check_trees(files):
     return failures
 
 
+# ─────────────────────────────────────────────────────────────
+# 检查 12 的规则：档位系统名
+# ─────────────────────────────────────────────────────────────
+# 这些「系统名」若在 frontmatter 的 description 里被声明为「N 系统名」，
+# 就必须与同文件章节标题里的「系统名（M 级/种）」一致。
+SCALE_SYSTEMS = ["景别", "角度", "构图", "运动", "光影"]
+
+
+def check_scale_claims(files):
+    """检查 12：档位声明一致性 —— 文档自己声明自己。
+
+    背景（2026-09-23，就在修 v41 的收尾时发现）：
+      `03-分镜导演/视觉分镜引擎.md` 的 **frontmatter description** 写着
+        「6 景别/7 角度/6 构图/13 运动/7 光影系统」，
+      而同文件 §4.2–§4.6 的标题实际是
+        「镜头景别系统（**7 级**）」「摄影机角度系统（**8 种**）」「构图系统（**9 种**）」
+        「摄影机运动（13 种）」「光影系统（**8 种** + 氛围词）」
+      —— **同一个文件自己跟自己矛盾**，而 frontmatter 是用户看到的「技能描述」。
+
+      而且不是第一次：景别/角度的声明**改过了**，构图/光影的**漏改了** ——
+      「改一半」是本项目的高发形态（同 §五·4「改权威层必须同步实体层」）。
+
+    设计优势：**纯文件内比对** —— 不涉及跨文件歧义，天然低误报。
+      （对比：叙事分镜引擎合法地写「景别七级 / 角度五式 / 构图六法」，
+        那是**另一个文件**，本检查互不影响。）
+
+    口径（两条都要，缺一必然误报）：
+      ① 只在 **YAML frontmatter 的 `description:`** 里找「N 系统名」声明
+      ② 只认**编号子章节标题**（`### 4.2 …（N 级/种）`）作为「实际档位」；
+         `### 2.7 光影` 这种没有「（N 种）」的标题不算，避免误判
+    """
+    failures = []
+    HEADING = re.compile(r"^#{2,4}\s*[0-9]+\.[0-9]+.*$")          # 编号子章节
+    SCALE = re.compile(r"（\s*([0-9]+)\s*(?:级|种|个|元素)")       # （7 级）/（9 种）
+
+    for ap, rel in files:
+        text = read(ap)
+        if not text:
+            continue
+        fm = re.match(r"^---\r?\n(.*?)\r?\n---\r?\n", text, re.S)
+        if not fm:
+            continue
+        desc = fm.group(1)
+
+        # ① 本文件章节标题里声明的「实际档位」
+        actual = {}
+        for line in text.splitlines():
+            if not HEADING.match(line):
+                continue
+            for sysname in SCALE_SYSTEMS:
+                if sysname in line and sysname not in actual:
+                    m = SCALE.search(line)
+                    if m:
+                        actual[sysname] = (int(m.group(1)), line.strip()[:60])
+        if not actual:
+            continue
+
+        # ② frontmatter 里声明的档位，逐个比对
+        for sysname, (real, title) in actual.items():
+            for dm in re.finditer(r"([0-9]+)\s*" + re.escape(sysname), desc):
+                if int(dm.group(1)) != real:
+                    ln = text[:fm.end()].count("\n")
+                    failures.append({
+                        "rule": f"档位声明与自身章节不符（{sysname}）",
+                        "file": rel, "line": max(1, ln),
+                        "text": f"frontmatter 写「{dm.group(0).strip()}」，"
+                                f"但 {title}",
+                        "should_be": f"改 frontmatter 为「{real} {sysname}」",
+                    })
+    return failures
+
+
 CN_NUMS = "一二三四五六七八九十"
 
 
@@ -1393,6 +1466,7 @@ CHECKS = [
     ("目录树一致性", check_trees, "README 里画的树是否与实际文件对得上"),
     ("结构引用一致性", check_structural_refs, "模块编号【0N xxx】与章节引用 §X 能否解析"),
     ("共享表头一致性", check_shared_headers, "同一张表在多处的表头是否逐字相同"),
+    ("档位声明一致性", check_scale_claims, "frontmatter 声明的档位是否与自身章节一致"),
 ]
 
 
