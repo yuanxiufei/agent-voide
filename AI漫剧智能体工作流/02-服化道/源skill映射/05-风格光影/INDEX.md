@@ -13,7 +13,7 @@
 
 | 文件 | 用途 | 优先级 |
 |---|---|---|
-| `cinematic-lighting-master.md` | 电影光影大师（12KB）→ 已归档至 `01-分镜导演/源skill/` | ⭐⭐⭐ |
+| `cinematic-lighting-master.md` | 电影光影大师（12KB）→ 已归档至 `03-分镜导演/源skill/` | ⭐⭐⭐ |
 | `cinematic-lighting-library.md` | 光影库（15KB，最全，31种布光） | ⭐⭐⭐ |
 | `分镜光影统一大师.md` | 分镜光影统一（15.5KB，跨镜一致性） | ⭐⭐⭐ |
 | `storyboard-lighting-kimi-i3.md` | 分镜布光 v3 | ⭐⭐ |
@@ -69,7 +69,7 @@
 | 文件 | 原目录 | 归属 |
 |---|---|---|
 | `anime-bg-unifier.md` | `角色/` | → 04 景（背景统一） |
-| `cinematic-lighting-master.md` | 已本地归档 | → `01-分镜导演/源skill/` |
+| `cinematic-lighting-master.md` | 已本地归档 | → `03-分镜导演/源skill/` |
 
 ---
 

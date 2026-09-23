@@ -303,4 +303,4 @@ Negative Prompt：flat lighting, overexposed, underexposed, harsh shadows, dirty
 
 1. **将「光影预设记录卡」纳入 `PROJECT_STATE.yaml`**：新增字段记录当前生效的光影预设与完整提示词
 2. **把六维公式写进 `TURNAROUND-STANDARD.md`**：作为所有出图的 Lighting 字段标准写法
-3. **在 `03-视频生成` 中复用**：视频提示词的光影描述必须来自同一份光影预设
+3. **在 `04-视频生成` 中复用**：视频提示词的光影描述必须来自同一份光影预设

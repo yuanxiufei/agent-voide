@@ -107,7 +107,7 @@
 | `image-character-analyzer.md` | → 02 化 |
 | `anime-bg-unifier.md` | → 04 景 |
 | `asset-expander.md` | → 06 管线 |
-| `pov-runner-video.md` | → 03 视频生成 |
+| `pov-runner-video.md` | → 04 视频生成 |
 | `Asset Producer（人物场景道具资产生成器）.md` | → 03 道 |
 
 ---

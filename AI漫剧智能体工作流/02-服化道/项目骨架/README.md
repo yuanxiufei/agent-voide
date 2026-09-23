@@ -14,8 +14,8 @@ AI_DRAMA_PROJECT/
 │   ├── PROJECT_STATE            ← 复制 `模板/PROJECT_STATE.yaml`
 │   ├── VISUAL_BIBLE             ← 复制 `模板/VISUAL_BIBLE.md`
 │   ├── CHANGELOG                ← 复制 `模板/CHANGELOG.yaml`
-│   ├── ID-REGISTRY              ← ⭐ 复制 `05-剧本文本/模板/ID-REGISTRY.md`（**由 05 建纲时创建**）
-│   └── OPEN-ISSUES              ← ⭐ 复制 `05-剧本文本/模板/OPEN-ISSUES.md`（同上）
+│   ├── ID-REGISTRY              ← ⭐ 复制 `01-剧本文本/模板/ID-REGISTRY.md`（**由 05 建纲时创建**）
+│   └── OPEN-ISSUES              ← ⭐ 复制 `01-剧本文本/模板/OPEN-ISSUES.md`（同上）
 │
 ├── 01_WORLD/                   世界观
 │   ├── ERA                     时代
@@ -95,7 +95,7 @@ RESERVED  →  DRAFT  →  LOCKED  →  （DEPRECATED）
 ## 三、初始化步骤
 
 1. 复制 `AI_DRAMA_PROJECT/` 到项目位置并重命名
-2. **先建两份共享文档**（`ID-REGISTRY` + `OPEN-ISSUES`）——这两份**由 05 剧本文本在建纲阶段创建**，若你从 02 阶段介入，先向用户索要或补建
+2. **先建两份共享文档**（`ID-REGISTRY` + `OPEN-ISSUES`）——这两份**由 01 剧本文本在建纲阶段创建**，若你从 02 阶段介入，先向用户索要或补建
 3. 把 `模板/` 下模板复制进 `00_PROJECT/` 并改名（PROJECT_STATE / VISUAL_BIBLE / CHANGELOG / ASSET_CARD / INDEX-TEMPLATES）
 4. 填写 `VISUAL_BIBLE` → 过世界观锁定
 5. 填写 `PROJECT_STATE` → 登记 `LOCK_WORLD`

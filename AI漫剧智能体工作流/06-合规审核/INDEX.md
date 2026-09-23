@@ -33,7 +33,7 @@
 ## 工作流定位
 
 ```
-【6.1】原始提示词（来自 01/02/03 各模块）
+【6.1】原始提示词（来自 03/02/03 各模块）
         ↓
 【6.2】风险扫描     ← seedance-prompt-filter / lingjian-prompt-inspector
         ↓

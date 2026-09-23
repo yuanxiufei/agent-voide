@@ -43,7 +43,7 @@
 
 | 文件 | 路径 | 用途 |
 |---|---|---|
-| `cinematic-lighting-master.md` | `风格/` | 人像布光（伦勃朗/蝴蝶/环形/分割光）→ 已归档至本地 `01-分镜导演/源skill/` |
+| `cinematic-lighting-master.md` | `风格/` | 人像布光（伦勃朗/蝴蝶/环形/分割光）→ 已归档至本地 `03-分镜导演/源skill/` |
 | `cinematic-lighting-library.md` | `风格/` | 光影库（15KB） |
 | `face-skin-enhancer.md` 配套 | — | 配合 `05-风格光影` 锁定肤质表现 |
 

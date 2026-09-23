@@ -34,7 +34,7 @@ ASSET:
     permanent_marks: []          # 标志性永久识别点（胎记/疤痕/齿型/痣…）
     signature_micro_expressions: []  # 终身不变的微表情习惯
     # 建议同时收录（影响跨镜识别）：
-    voice:                       # 【规格未覆盖，本项目补充】音色，对接 04-音乐音频
+    voice:                       # 【规格未覆盖，本项目补充】音色，对接 05-音乐音频
       base_timbre: ""            # 全生命周期基础音色
       speed: ""                  # 语速
       verbal_tics: []            # 语癖 / 口头禅

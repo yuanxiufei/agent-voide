@@ -16,7 +16,7 @@
 | `景/scene-multi-angle-generator.md` | N/S/E/W 坐标系 + 场景圣经 + S01 两阶段生图 | `CONSISTENCY-CHECKLIST.md` §二·补2 + `VISUAL_BIBLE.md` §4.7 + `INDEX-TEMPLATES.md` §4.1 + `PROJECT-PIPELINE.md` §三·补A | ✅ |
 | `服/character-lifecycle-designer.md` | 终身固定特征库 vs 剧情适配变量 + voice/body_language | `ASSET_CARD.yaml` fixed_features/stage_variables + `LOCK-SYSTEM.md` §四·补 | ✅ |
 | `风格/storyboard-lighting-master.md` | 光影六维公式 + 光影预设记录卡 | `PROMPT-TEMPLATES.md` §五·补2 + `PROJECT_STATE.yaml` lighting_preset | ✅ |
-| `管线/video-generation-supervisor.md` | 工程重试层（原参数重试） | `PROJECT-PIPELINE.md` §三·补B + `03-视频生成/00-主控智能体.md` §六·补 | ✅ |
+| `管线/video-generation-supervisor.md` | 工程重试层（原参数重试） | `PROJECT-PIPELINE.md` §三·补B + `04-视频生成/00-主控智能体.md` §六·补 | ✅ |
 | `管线/canvas-organizer.md` | 破坏性操作二次确认 + 软删除 | `LOCK-SYSTEM.md` §四·补2 | ✅ |
 | `管线/script-to-art-assets.md` | 三段式快速公式 | `PROMPT-TEMPLATES.md` §五·补 | ✅ |
 | `风格/style-extractor.md` + `hollywood-lut.md` | 风格锁定三手段（DNA/LUT/六维） | `PROMPT-TEMPLATES.md` §五·补3 + `VISUAL_BIBLE.md` §4.8 | ✅ |
@@ -106,7 +106,7 @@
 | §三·补A 场景资产库前置 | 七步流程 + 用户可见输出（仅一行）+ 分镜查表用法 |
 | §三·补B 工程重试层 | 三层重试顺序（原参数重试 → 改词 → 上报）+ 参数建议 |
 
-### 10. `03-视频生成/00-主控智能体.md`
+### 10. `04-视频生成/00-主控智能体.md`
 
 | 新增节 | 内容 |
 |---|---|
@@ -121,8 +121,8 @@
 
 | # | 动作 | 文件 | 说明 |
 |---|---|---|---|
-| 1 | 规格提炼 | `04-音乐音频/01-声音设计引擎.md` | 原 34.6KB 规格（2344 行）→ 提炼版 23.1KB（480 行）；原文移入 `_规格原文/` 存档。删除 6 套重复输出模板（合并 1 套）、4 组重叠质量标准、3 处重叠行为规则 |
-| 2 | 合并版去重 | `01-分镜导演/分镜导演-完整合并版.md` | 77.3KB → 30.1KB；第 2 章从「10 个源 skill 全文复制」改为**指向式索引表** |
+| 1 | 规格提炼 | `05-音乐音频/01-声音设计引擎.md` | 原 34.6KB 规格（2344 行）→ 提炼版 23.1KB（480 行）；原文移入 `_规格原文/` 存档。删除 6 套重复输出模板（合并 1 套）、4 组重叠质量标准、3 处重叠行为规则 |
+| 2 | 合并版去重 | `03-分镜导演/分镜导演-完整合并版.md` | 77.3KB → 30.1KB；第 2 章从「10 个源 skill 全文复制」改为**指向式索引表** |
 | 3 | **表情库补英文** | `引擎/EXPRESSION-POSE-LIBRARY.md` §一 | 16 式表情**新增英文描述词列**（提炼自 `源skill库/服/character-model-sheet.md` 的 12 式并补齐至 16 式）+ 表情集网格布局规范；源文件该节标注「已提炼」 |
 | 4 | **光影三源分工** | `引擎/TURNAROUND-STANDARD.md` §七 | 新增「光影设计的三个来源与分工」——技术层（本文件）/ 流程层（storyboard-lighting-master）/ 方案库层（cinematic-lighting-library）/ 色调层（hollywood-lut），并列出已提炼内容与交叉使用顺序 |
 | 5 | 权威边界 | `源skill库/README.md` | 新增「⚠️ 权威边界」节：规格 > 引擎/模板 > 源素材；附已提炼内容对照表 |
@@ -133,7 +133,7 @@
 
 ## 二·补2｜第四批：第二份用户规格提炼
 
-**《Suno 歌词大师｜完整智能体迁移配置》**（80 节 / 3038 行 / 41.9KB）→ `04-音乐音频/02-Suno歌词引擎.md`（777 行 / 31.3KB）
+**《Suno 歌词大师｜完整智能体迁移配置》**（80 节 / 3038 行 / 41.9KB）→ `05-音乐音频/02-Suno歌词引擎.md`（777 行 / 31.3KB）
 
 **保真度验证**：63 个关键词汇中，原文命中的 62 个在提炼版中 **0 丢失**（含全部 14 个 Style 模板文本、8 类词库、18 个 Suno 标签、8 大曲风族约 70 子风格名）。
 
@@ -159,7 +159,7 @@
 - 押韵优先级（自然表达 > 情绪 > 画面 > 押韵）
 - 质量自检 23 项 + 版权红线 + 歌手参考转译规则
 
-**落到 04 模块的三主控结构**：
+**落到 05 模块的三主控结构**：
 ```
 00-主控智能体.md      调度 / 歌词快速版 / BGM / 调音   （歌词部分降为快速版 + 指向 02）
 01-声音设计引擎.md     声线 / 环境声 / Foley / 剧情声音   （调音大师班提炼）

@@ -294,7 +294,7 @@ precise body proportions, character design strictly matching the reference profi
 | 基准肖像 → 分阶段套图 | §29 的 `Character_001_State_A / _State_B / _State_C` 生成顺序 |
 | 「所有套图光影/质感/画幅完全统一」 | §28 跨集 `LOCK_LIGHTING` / `LOCK_COLOR` |
 | 11 维度档案（固定顺序） | §05.1 人物信息的 25 个字段（本文件整理为 11 个维度组） |
-| 声音特点 / 肢体语言维度 | **规格未覆盖**，可补充到 ASSET_CARD（对接 `04-音乐音频` 配音选角） |
+| 声音特点 / 肢体语言维度 | **规格未覆盖**，可补充到 ASSET_CARD（对接 `05-音乐音频` 配音选角） |
 | 全节点强制确认 | 与 `02-服化道` 主控的"每步暂停等确认"一致，本文件话术更严格 |
 | 跳过保护（二次确认） | 与规格 §42「必须先列出将变化的锁定项再执行」同源 |
 
