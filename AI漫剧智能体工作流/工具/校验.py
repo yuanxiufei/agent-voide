@@ -556,6 +556,24 @@ MECHANISM_RULES = [
         "keyword": "自动检出 12 类问题",
         "must_in": ["README.md"],
     },
+    # ── 07-资产库Agent（工作流的代码实现）──
+    # 2026-09-23 新增。核心设计约束是「**只读**工作流、不复制规则」，
+    # 若被改成复制一份，就会与工作流发散（质量守则 §2 单一权威来源）。用规则钉住。
+    {
+        "name": "07 Agent：零依赖可跑（无 Key 也能全流程）",
+        "keyword": "无需任何 API Key",
+        "must_in": ["07-资产库Agent/README.md"],
+    },
+    {
+        "name": "07 Agent：规则只读工作流、不复制",
+        "keyword": "本项目**只读**工作流",
+        "must_in": ["07-资产库Agent/README.md"],
+    },
+    {
+        "name": "07 Agent：Agent 行为规范（可移植 System Prompt）",
+        "keyword": "核心执行指令",
+        "must_in": ["07-资产库Agent/SYSTEM_PROMPT.md"],
+    },
 ]
 
 # 禁用前缀：pattern 命中即失败，除豁免文件外
@@ -725,6 +743,7 @@ REQUIRED_DIR_MIN = [
     ("05-音乐音频/示例演示", 1, "引擎实跑验证示例"),
     ("01-剧本文本/模板", 3, "剧本模板（含 ID/未决项）"),
     ("01-剧本文本/示例演示", 2, "引擎实跑验证 + 分集大纲参照样例"),
+    ("07-资产库Agent/src", 12, "代码实现（规则源/解析/补全/提示词/一致性/出图/资产库）"),
     ("示例演示", 2, "端到端示例"),
 ]
 
@@ -780,11 +799,26 @@ SHARED_TABLE_HEADERS = [
 # 2. 工具函数
 # ─────────────────────────────────────────────────────────────
 
+# 统计时要**跳过**的目录（不是「文档」，而是运行态 / 外部依赖）
+# ─────────────────────────────────────────────────────────────
+# 2026-09-23 加入：`07-资产库Agent` 是工作流的**代码实现**，它运行时会在
+# `output/` 下生成提示词（.md）与元数据 —— 这些是**派生产物**，不是工作流文档。
+#
+# 若不排除，会出现荒谬的联动：**Agent 每跑一次，工作流的「总量声明」就过时一次**
+# （实测：137 → 132，仅因清空了 output/）。检查器于是变成噪声源。
+SKIP_DIRS = {
+    ".git", "node_modules",
+    "__pycache__", ".venv", "venv",   # Python
+    "output",                          # 07 Agent 的运行态产出（可重算）
+    "vendor",                          # 07 Agent 的规则快照（工作流规则的副本）
+}
+
+
 def walk_files():
-    """返回 (绝对路径, 相对路径) 列表，仅 md/yaml。"""
+    """返回 (绝对路径, 相对路径) 列表，仅 md/yaml（跳过运行态目录，见 SKIP_DIRS）。"""
     out = []
     for dirpath, dirnames, filenames in os.walk(ROOT):
-        dirnames[:] = [d for d in dirnames if d not in (".git", "node_modules")]
+        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
         for fn in filenames:
             if fn.endswith(EXT):
                 ap = os.path.join(dirpath, fn)

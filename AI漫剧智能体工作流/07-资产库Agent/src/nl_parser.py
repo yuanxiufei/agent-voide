@@ -1,0 +1,232 @@
+# -*- coding: utf-8 -*-
+"""自然语言 → 结构化字段（**规则版，无需任何 API Key**）。
+
+`llm_client.py` 用大模型解析更准，但**没 Key 就跑不起来**。
+本模块是兜底：有 Key 用 LLM，没 Key 用规则，**两条路径输出同一个 `ParsedInput`**，
+下游完全无感 —— 这是「复制到另一台电脑即可运行」的前提。
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+
+# ── 词表（来源：用户素材 SYSTEM_PROMPT.md §5 风格 / §7 材质 / §8 配色）──
+
+WORLD_STYLES: dict[str, list[str]] = {
+    "wasteland": ["废土", "末日", "末世", "核战", "wasteland"],
+    "cyberpunk": ["赛博朋克", "赛博", "义体", "机械义", "cyberpunk", "霓虹"],
+    "scifi": ["科幻", "未来", "太空", "火星", "星际", "机甲", "飞船", "scifi"],
+    "fantasy": ["奇幻", "魔法", "精灵", "龙", "幻想", "fantasy"],
+    "dark_fantasy": ["黑暗奇幻", "暗黑", "血族", "吸血鬼", "哥特"],
+    "ancient": ["古代", "古装", "古风", "武侠", "江湖", "仙侠", "东方幻想"],
+    "western_fantasy": ["西方幻想", "骑士", "中世纪", "城堡", "王国"],
+    "steampunk": ["蒸汽朋克", "蒸汽", "齿轮", "steampunk"],
+    "modern": ["现代", "都市", "当代"],
+    "military": ["军事", "军人", "佣兵", "雇佣兵", "特种", "战场", "军用"],
+    "mecha": ["机甲", "机器人", "机战", "mecha"],
+}
+
+MATERIALS = ["棉", "亚麻", "牛仔", "皮革", "人造皮革", "防水织物", "战术尼龙",
+             "凯夫拉纤维", "碳纤维", "钛合金", "铝合金", "磨砂钢", "镀铬金属",
+             "黄铜", "铜", "陶瓷", "玻璃", "亚克力", "橡胶", "硅胶", "毛皮",
+             "羽毛", "木材", "石材", "魔法晶体", "生物组织"]
+
+COLORS = ["黑", "白", "灰", "银", "金", "红", "暗红", "酒红", "橙", "黄",
+          "绿", "青", "蓝", "紫", "粉", "棕", "米", "藏青"]
+
+GENDER_WORDS = {"女": "female", "男": "male", "女性": "female", "男性": "male",
+                "少女": "female", "女孩": "female", "少年": "male", "男孩": "male",
+                "女人": "female", "男人": "male", "女士": "female", "先生": "male"}
+
+PROP_WORDS = ["枪", "步枪", "狙击枪", "手枪", "刀", "剑", "匕首", "斧", "弓",
+              "道具", "装置", "机械臂", "义肢", "头盔", "护甲", "盾", "药",
+              "注射器", "终端", "面板", "钥匙", "戒指", "项链"]
+COSTUME_WORDS = ["服装", "衣服", "套装", "制服", "战衣", "盔甲", "长袍",
+                 "风衣", "外套", "衬衫", "皮夹克", "夹克", "裤子", "长裤",
+                 "裙", "斗篷", "披风", "护甲", "背心", "工装"]
+NO_COMPLETE_WORDS = ["不要自动补全", "别自动补全", "严格按我的设定", "不要补全"]
+
+HAIR_WORDS = ["长发", "短发", "中长发", "及腰", "马尾", "双马尾", "编发", "大背头",
+              "寸头", "卷发", "直发", "刘海", "狼尾", "蘑菇头", "波波头", "背头",
+              "油头", "碎发", "乱发", "束发", "丸子头"]
+
+EQUIP_WORDS = ["机械左臂", "机械右臂", "机械手臂", "机械腿", "机械右腿", "机械左腿",
+               "义眼", "机械义眼", "义肢", "军靴", "护目镜", "面具", "头盔",
+               "背包", "枪套", "匕首", "佩剑", "手杖", "护甲", "肩甲", "披风",
+               "项链", "戒指", "腰带", "手套", "斗篷"]
+
+JOBS = ["佣兵", "雇佣兵", "杀手", "刺客", "医生", "护士", "侦探", "警探", "警察",
+        "工程师", "科学家", "教授", "博士", "士兵", "军人", "将军", "元帅",
+        "黑客", "机修师", "拾荒者", "猎人", "商人", "老板娘", "船长", "飞行员",
+        "骑士", "法师", "剑客", "武僧", "皇帝", "公爵", "公主", "王子", "教主",
+        "记者", "教师", "学生", "程序员", "设计师", "司机", "厨师", "农民"]
+
+MODIFY_VERBS = ["改成", "换成", "改为", "变成", "增加", "加上", "去掉", "删除", "减掉"]
+
+FIELD_MAP = {
+    "头发": "hair", "发色": "hair_color", "发型": "hair_style", "眼睛": "eyes",
+    "瞳色": "eye_color", "服装": "clothing", "衣服": "clothing",
+    "装备": "equipment", "武器": "equipment", "颜色": "color",
+    "机械臂": "cybernetic_arm", "机械腿": "cybernetic_leg", "义眼": "cybernetic_eye",
+    "年龄": "age", "体型": "body", "身材": "body",
+}
+
+
+@dataclass
+class ParsedInput:
+    raw: str = ""
+    asset_type: str = "character"
+    operation: str = "create"
+    name: str = ""
+    age: int | None = None
+    gender: str = ""
+    occupation: str = ""
+    role: str = ""
+    world: str = ""
+    camp: str = ""
+    appearance_hints: list[str] = field(default_factory=list)
+    hair_hints: list[str] = field(default_factory=list)
+    clothing_hints: list[str] = field(default_factory=list)
+    equipment_hints: list[str] = field(default_factory=list)
+    color_hints: list[str] = field(default_factory=list)
+    material_hints: list[str] = field(default_factory=list)
+    target_asset: str = ""
+    change_fields: list[str] = field(default_factory=list)
+    no_auto_complete: bool = False
+    parser: str = "rule"
+    confidence: float = 0.5
+
+
+def _find_age(text: str) -> int | None:
+    m = re.search(r"(\d{1,3})\s*(?:岁|years?\s*old)", text)
+    if m and 1 <= int(m.group(1)) <= 200:
+        return int(m.group(1))
+    for k, v in {"十": 10, "二十": 20, "三十": 30, "四十": 40, "五十": 50,
+                 "六十": 60, "七十": 70, "八十": 80, "九十": 90, "一百": 100}.items():
+        if f"{k}岁" in text:
+            return v
+    return None
+
+
+def _find_gender(text: str) -> str:
+    for k, v in GENDER_WORDS.items():
+        if k in text:
+            return v
+    return ""
+
+
+def _find_world(text: str) -> str:
+    best, blen = "", 0
+    for style, kws in WORLD_STYLES.items():
+        for kw in kws:
+            if kw in text and len(kw) > blen:
+                best, blen = style, len(kw)
+    return best
+
+
+def _find_occupation(text: str) -> str:
+    for job in JOBS:
+        if job in text:
+            return job
+    m = re.search(r"的([\u4e00-\u9fa5]{2,6})(?:，|,|。|$)", text)
+    return m.group(1) if m else ""
+
+
+def _detect_modify(text: str) -> tuple[bool, list[str], str]:
+    is_mod = any(v in text for v in MODIFY_VERBS) or bool(
+        re.search(r"把(她|他|它|这个|那个)", text))
+    fields: list[str] = []
+    for k, v in FIELD_MAP.items():
+        if k in text and v not in fields:
+            fields.append(v)
+    from .schema import parse_id
+    target = ""
+    m = re.search(r"((?:CHR|CST|PRP|ENV)_\d{1,3}|(?:CHAR|COSTUME|PROP|SCENE)-\d{1,3})",
+                  text, re.IGNORECASE)
+    if m:
+        target = m.group(1)
+    elif "她" in text or "他" in text:
+        target = "previous"
+    return is_mod, fields, target
+
+
+def _collect_color_hints(text: str) -> list[str]:
+    """按**在原文中出现的先后**排序取色词。
+
+    ⚠️ 不能按词表顺序取（`COLORS` 里「白」在「银」之前）——「银白色」会解析成「白」。
+    按出现位置排序后，「银白色」的首个命中是「银」✓。
+    """
+    hits = [(text.find(c), c) for c in COLORS if c in text]
+    return [c for _, c in sorted(hits)]
+
+
+def _object_after_measure(text: str, words: list[str], span: int = 12) -> str:
+    """找「**量词 + 宾语**」里的宾语属于哪一类。
+
+    必要性（实测踩到）：「给**女佣兵**设计一套**风衣**」——
+    句中出现「女」（性别词），按"有人物词就是角色"的规则会被误判成角色，
+    但用户要的明明是**服装资产**。
+
+    「量词 + 宾语」是更可靠的信号：`设计一套风衣` / `设计一把步枪`。
+    """
+    # ⚠️ 必须是 `{1,N}`（1 到 N 个字），不是 `{N}`（恰好 N 个字）——
+    # 写 `{12}` 会要求宾语恰好 12 字，「破损军用风衣」（6 字）就永远匹配不上。
+    for m in re.finditer(r"(?:套|件|条|把|支|柄|台|个)([\u4e00-\u9fa5A-Za-z]{1,%d})"
+                         % span, text):
+        frag = m.group(1)
+        for w in words:
+            if w in frag:
+                return w
+    return ""
+
+
+def _detect_asset_type(text: str) -> str:
+    if any(k in text for k in ("场景", "环境")):
+        return "environment"
+
+    # ① 「量词 + 宾语」优先 —— 用户要做的"那个东西"是什么，比句中提到谁更重要
+    if _object_after_measure(text, COSTUME_WORDS):
+        return "costume"
+    if _object_after_measure(text, PROP_WORDS):
+        return "prop"
+
+    has_person = bool(_find_gender(text)) or bool(re.search(r"\d{1,3}\s*岁", text))
+    if any(w in text for w in PROP_WORDS) and not has_person:
+        return "prop"
+    if any(w in text for w in COSTUME_WORDS) and not has_person:
+        return "costume"
+    return "character"
+
+
+def parse(text: str, default_type: str = "") -> ParsedInput:
+    """规则解析入口。`default_type` 非空时强制该类型（供 CLI --type 覆盖）。"""
+    text = (text or "").strip()
+    p = ParsedInput(raw=text)
+    p.no_auto_complete = any(w in text for w in NO_COMPLETE_WORDS)
+
+    is_mod, fields, target = _detect_modify(text)
+    if is_mod:
+        p.operation, p.change_fields, p.target_asset = "modify", fields, target
+
+    p.asset_type = default_type or _detect_asset_type(text)
+    p.age = _find_age(text)
+    p.gender = _find_gender(text)
+    p.occupation = _find_occupation(text)
+    p.world = _find_world(text)
+    if p.asset_type == "character":
+        p.name = f"{p.occupation or '角色'}-{p.world or '未定'}"
+
+    p.hair_hints = [h for h in HAIR_WORDS if h in text] + \
+        [f"{c}发" for c in COLORS if f"{c}发" in text]
+    p.equipment_hints = [e for e in EQUIP_WORDS if e in text]
+    p.color_hints = _collect_color_hints(text)
+    p.material_hints = [m for m in MATERIALS if m in text]
+    p.clothing_hints = [w for w in ("风衣", "外套", "制服", "战衣", "盔甲", "斗篷",
+                                    "军装", "长袍", "衬衫", "皮夹克") if w in text]
+    p.appearance_hints = p.hair_hints + p.color_hints
+
+    signals = sum(bool(x) for x in (p.age, p.gender, p.occupation, p.world,
+                                    p.hair_hints, p.equipment_hints))
+    p.confidence = min(0.9, 0.3 + 0.1 * signals)
+    return p
