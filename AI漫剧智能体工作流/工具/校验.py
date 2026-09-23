@@ -887,6 +887,204 @@ def check_text_integrity(files):
     return failures
 
 
+def check_numeric_claims(files):
+    """检查 8：数字声明一致性 —— 文档里写的体积 / 行数 / 个数是否与现状一致。
+
+    背景：数字声明是本项目的**高发失效点**，历史已踩过 4 次以上：
+      · 合并版从 77.3KB 去重到 30KB 后，多处文档仍写旧数字
+      · 部署指南的「体积表」8 项数据全部过时
+      · PowerShell `(Get-Content).Count` 误计行数（1824），正确是 2344——
+        而且只改了索引、漏改正文 2 处
+      · 根 README 写「102 个文件 / 753 KB」，实际 123 / 1230
+
+    设计要点（三条都是实测踩出来的假阳性，缺一不可）：
+      ① **只检查全项目唯一的文件名** —— `00-主控智能体.md` 在 5 个模块都存在，
+         无法判断文档指的是哪一个，强行比较必然误报
+      ② **跳过含 `→` 的行** —— 那是提炼过程描述（「2344 行 → 481 行」），不是现状声明
+      ③ **跳过同一行有 ≥2 个同类数字的** —— 那是「前后对比」写法
+         （版本说明「实跑时 724 行…现为 777 行」、错误日志「1824 行 | 2344 行」），
+         此时无法判断该拿哪个数字当"现状"，跳过比乱报好
+    """
+    from collections import defaultdict
+    failures = []
+
+    # 文件名 → 出现位置（仅唯一的才参与比对）
+    by_base = defaultdict(list)
+    for ap, rel in files:
+        by_base[os.path.basename(ap)].append(ap)
+    uniq = {b: v[0] for b, v in by_base.items() if len(v) == 1}
+
+    local_paths = [ap for ap, _ in files]
+    local_cnt = len([ap for ap in local_paths if ap.endswith((".md", ".yaml"))])
+    local_kb = sum(os.path.getsize(ap) for ap in local_paths
+                   if ap.endswith((".md", ".yaml"))) / 1024
+
+    KB = re.compile(r"`([^`\n]+\.(?:md|py|yaml))`\s*[|｜]\s*\**\s*([0-9]+(?:\.[0-9])?)\s*KB")
+    LN = re.compile(r"([0-9]{2,5})\s*行")
+    NAME = re.compile(r"`([^`\n]+\.(?:md|yaml))`")
+    CNT = re.compile(r"([\u4e00-\u9fa5A-Za-z]+)/?\s*[（(]\s*([0-9]{1,2})\s*个")
+    DIRMAP = {"引擎": "02-服化道/引擎", "模板": "02-服化道/模板",
+              "源skill库": "02-服化道/源skill库"}
+
+    def line_of(t, pos):
+        return t[:pos].count("\n") + 1
+
+    def line_text(t, pos):
+        a = t.rfind("\n", 0, pos) + 1
+        b = t.find("\n", pos)
+        return t[a: b if b != -1 else len(t)]
+
+    def is_before_after(line, pat):
+        """同一行出现 ≥2 个同类数字 → 是「前后对比」写法，不判过时。"""
+        return len(pat.findall(line)) >= 2
+
+    KB_NUM = re.compile(r"[0-9]+(?:\.[0-9])?\s*KB")
+    LN_NUM = re.compile(r"[0-9]+\s*行")
+
+    for ap, rel in files:
+        t = read(ap)
+        if not t:
+            continue
+        # ① 体积声明
+        for m in KB.finditer(t):
+            name, kb = os.path.basename(m.group(1)), float(m.group(2))
+            line = line_text(t, m.start())
+            if name not in uniq or "→" in line or is_before_after(line, KB_NUM):
+                continue
+            real = os.path.getsize(uniq[name]) / 1024
+            if abs(real - kb) > 0.6:
+                failures.append({
+                    "rule": f"体积声明过时（{name}）", "file": rel,
+                    "line": line_of(t, m.start()),
+                    "text": f"写 {kb} KB，实际 {real:.1f} KB",
+                    "should_be": f"{real:.1f} KB",
+                })
+        # ② 行数声明
+        for m in LN.finditer(t):
+            line = line_text(t, m.start())
+            if "→" in line or "->" in line or is_before_after(line, LN_NUM):
+                continue
+            names = [os.path.basename(x) for x in NAME.findall(line)]
+            names = [x for x in names if x in uniq]
+            if len(names) != 1:
+                continue
+            real = read(uniq[names[0]]).count("\n") + 1
+            if abs(real - int(m.group(1))) > 2:
+                failures.append({
+                    "rule": f"行数声明过时（{names[0]}）", "file": rel,
+                    "line": line_of(t, m.start()),
+                    "text": f"写 {m.group(1)} 行，实际 {real} 行",
+                    "should_be": f"{real} 行",
+                })
+        # ③ 目录个数声明（排除索引 README，它不算一项内容）
+        for m in CNT.finditer(t):
+            label, n = m.group(1), int(m.group(2))
+            sub = DIRMAP.get(label)
+            if not sub or not os.path.isdir(os.path.join(ROOT, sub)):
+                continue
+            real = 0
+            for _, _, fns in os.walk(os.path.join(ROOT, sub)):
+                real += len([f for f in fns
+                             if f.endswith((".md", ".yaml")) and f != "README.md"])
+            if real != n:
+                failures.append({
+                    "rule": f"个数声明过时（{label}）", "file": rel,
+                    "line": line_of(t, m.start()),
+                    "text": f"写 {n} 个，实际 {real} 个",
+                    "should_be": f"{real} 个",
+                })
+        # ④ 总量声明（排除小数字，如「64 个文件」指工作区素材）
+        for m in re.finditer(r"([0-9]{3})\s*个文件", t):
+            n = int(m.group(1))
+            if abs(n - local_cnt) > 3:
+                failures.append({
+                    "rule": "总量声明过时", "file": rel,
+                    "line": line_of(t, m.start()),
+                    "text": f"写 {n} 个文件", "should_be": f"{local_cnt} 个",
+                })
+    return failures
+
+
+def check_trees(files):
+    """检查 9：目录树一致性 —— README 里画的树是否与实际文件对得上。
+
+    背景（2026-09-23 用户报障）：
+      根 README 的目录树出现三类失效，而前 8 类检查**全都发现不了**——
+      因为目录树是"人类可读的结构描述"，不是路径式引用（检查 1 只抓 `` `路径` `` 反引号引用）：
+        · **模块顺序乱**（迁移到新编号后仍按旧顺序 03→02→04→05→01→06 排列）
+        · **漏列真实内容**（`_archive/`、`99-源仓库索引/规格覆盖率审计.md`）
+        · **数字过时**（Suno 引擎写 29KB 实为 30.6KB、合并版写 31KB 实为 31.9KB）
+
+    口径（**必须收窄**，否则误报率极高）：
+      · **只查「描述仓库结构」的 README** —— 根 `README.md` 与各模块 `0X-*/README.md`
+        ❌ 不查：`引擎/`·`模板/`·`_规格原文/`·`源skill库/` 下的文件与 `项目骨架/README.md`，
+           因为它们的「树」是**概念结构图 / 骨架示意 / 外部目录树**，本就不该存在于仓库
+        （首版未收窄 → 一次误报 45 项：概念图里的 `§4.2`/`C`/`B2`、骨架里的
+          `PROJECT_STATE`/`CHARACTER_001`、`data/资料` 的外部目录、ASCII 框线等）
+      · 文件条目在该 README **子树内按 basename** 匹配（树里常只写文件名）
+      · 跳过**图示块**：多数行含 `→`（接线图），或条目本身是**纯框线字符**
+    """
+    TREE = re.compile(r"^[│├└─\s]*[│├└]──\s*([^\s←⭐]+)", re.M)
+    BOX = re.compile(r"^[─│┌┐└┘├┤┬┴┼\s]+$")
+    failures = []
+
+    for ap, rel in files:
+        # ① 文件范围收窄
+        base_name = os.path.basename(ap)
+        if base_name != "README.md":
+            continue
+        if "项目骨架" in rel or "_archive" in rel or "示例演示" in rel:
+            continue
+        if rel != "README.md" and not re.match(r"^0[1-6]-[^/]+/README\.md$", rel):
+            continue
+
+        text = read(ap)
+        if not text:
+            continue
+        base = os.path.dirname(ap)
+        names, dirs = set(), set()
+        for dp, dns, fns in os.walk(base):
+            names.update(fns)
+            dirs.update(dns)
+        if not names:
+            continue
+
+        for block in re.findall(r"```(?:text)?\n(.*?)```", text, re.S):
+            entries = [TREE.match(l).group(1) for l in block.splitlines() if TREE.match(l)]
+            if not entries:
+                continue
+            # ② 跳过图示块
+            arrow = sum(1 for l in block.splitlines() if "→" in l)
+            if arrow > len(entries) * 0.5:
+                continue
+
+            for ent in entries:
+                ent = ent.strip().rstrip("/")
+                if not ent or ent.startswith(("*", "…", "(")) or ent in (".", ".."):
+                    continue
+                if BOX.match(ent):            # 纯框线字符（ASCII 框图）
+                    continue
+                bn = ent.split("/")[-1]
+                if "<" in bn or "…" in bn:    # 占位符
+                    continue
+                is_dir = ent.endswith("/") or "." not in bn
+                ok = (bn in dirs) if is_dir else (bn in names)
+                if not ok:
+                    ln = 0
+                    for i, l in enumerate(text.splitlines(), 1):
+                        m = TREE.match(l)
+                        if m and m.group(1).strip().rstrip("/") == ent:
+                            ln = i
+                            break
+                    failures.append({
+                        "rule": f"目录树条目不存在（{'目录' if is_dir else '文件'}）",
+                        "file": rel, "line": ln,
+                        "text": ent,
+                        "should_be": "改为实际存在的名称，或从树中删除",
+                    })
+    return failures
+
+
 CHECKS = [
     ("引用完整性", check_references, "路径式引用是否指向真实文件"),
     ("机制覆盖", check_mechanisms, "机制关键词是否在应出现处都出现"),
@@ -895,6 +1093,8 @@ CHECKS = [
     ("交付包字段", check_delivery_fields, "交付包是否含 ID 与未决项字段"),
     ("素材完整性", check_assets, "参考 md / 规格原文是否被误删"),
     ("文本完整性", check_text_integrity, "全角括号配平与损坏指纹（防字符级替换事故）"),
+    ("数字声明", check_numeric_claims, "文档里的体积/行数/个数/总量是否过时"),
+    ("目录树一致性", check_trees, "README 里画的树是否与实际文件对得上"),
 ]
 
 
