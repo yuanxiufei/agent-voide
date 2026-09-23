@@ -29,9 +29,12 @@ try:
 except Exception:
     pass
 
+from src import dispatcher, handover, module_loader, registry   # noqa: E402
 from src.agent import AgentConfig, DramaAssetAgent            # noqa: E402
 from src.consistency import check_required, check_text_risk   # noqa: E402
+from src.module_loader import ModuleLoader                    # noqa: E402
 from src.prompt_engine import build_source_prompt             # noqa: E402
+from src.runtime import Runtime                               # noqa: E402
 
 ROOT = Path(__file__).resolve().parent
 
@@ -252,6 +255,181 @@ def cmd_probe(a: argparse.Namespace) -> int:
 
 
 # ─────────────────────────────────────────────────────────────
+# 七个流程 agent（通用运行时的命令）
+# ─────────────────────────────────────────────────────────────
+
+def _agent(name: str):
+    spec = registry.resolve(name)
+    if spec is None:
+        print(f"❌ 未找到 agent「{name}」。可用："
+              f"{' / '.join(s.key + '(' + s.no + ')' for s in registry.REGISTRY)}")
+    return spec
+
+
+def cmd_agents(a: argparse.Namespace) -> int:
+    """列出全部流程 agent（由注册表生成，不会与实现失联）。"""
+    loader = ModuleLoader()
+    hr("🧩 流程 agent 一览（**每个模块都可独立运行**）")
+    print(f"  工作流根：{loader.root or '⚠️ 未找到'}\n")
+    for s in registry.REGISTRY:
+        miss = loader.missing(s)
+        flag = "" if not miss else f"  ⚠️ 缺 {len(miss)} 份文档"
+        print(f"  【{s.no}】{s.name:<12s} key={s.key:<13s}{flag}")
+        print(f"        职责：{s.summary}")
+        print(f"        交付：{' · '.join(s.outputs) or '—'}")
+        if s.gate:
+            print(f"        门禁：{s.gate}（"
+                  f"{' / '.join(c.label for c in s.gate_checks)}）")
+        print(f"        启动：python main.py init {s.key}")
+        print()
+    print("  通用命令：run / init / route / handover / gate / doc / outline")
+    return 0
+
+
+def cmd_run(a: argparse.Namespace) -> int:
+    """用**任意** agent 处理输入（有 Key 真调模型；无 Key 出可粘贴调用包）。"""
+    spec = _agent(a.agent)
+    if not spec:
+        return 2
+    text = " ".join(a.text)
+    rt = Runtime()
+    hr(f"🤖 {spec.no} {spec.name}  ← {spec.key}")
+    print(f"  工作流根：{rt.loader.root or '⚠️ 未找到'}")
+    res = rt.run(spec, text, brief=a.brief)
+    hr(f"模式：{'LLM 真实调用' if res.mode == 'llm' else '调用包（未配 Key）'}")
+    for n in res.notes:
+        print(f"  ℹ️ {n}")
+    if res.answer:
+        print()
+        print(res.answer)
+    else:
+        hr("📋 可直接粘贴的调用包（System + User）")
+        print(res.call_package)
+    if res.saved:
+        hr("📦 落盘")
+        for k, v in res.saved.items():
+            print(f"  {k:6s} {v}")
+    return 0
+
+
+def cmd_init(a: argparse.Namespace) -> int:
+    """输出某个 agent 的「初始化指令」—— 独立启动它时该说的开场白。"""
+    spec = _agent(a.agent)
+    if not spec:
+        return 2
+    rt = Runtime()
+    hr(f"🚀 独立启动：{spec.no} {spec.name}")
+    print(rt.greet(spec))
+    print()
+    print(f"  接着可用：python main.py run {spec.key} \"<你的输入>\"")
+    return 0
+
+
+def cmd_route(a: argparse.Namespace) -> int:
+    """00 总控路由：判定输入该进哪个 agent。"""
+    text = " ".join(a.text)
+    r = dispatcher.route(text)
+    hr("🧭 路由判定")
+    print(f"  输入：{text}")
+    print(f"  结论：{'✅ ' if r.confident else '⚠️ '}{r.agent.no} {r.agent.name}"
+          if r.agent else "  结论：无法判定")
+    print(f"  依据：{r.reason}")
+    if r.scores:
+        print(f"  得分：{' · '.join(f'{k}={v}' for k, v in r.scores.items())}")
+    if not r.confident:
+        print()
+        print(f"  ❓ 按工作流 §八·5「不确定就问一句」，先问：{r.question}")
+        if r.candidates:
+            print(f"     候选：{' / '.join(r.candidates)}")
+    print()
+    print(f"  推进：python main.py run {r.agent.key} \"{text}\"")
+    return 0
+
+
+def cmd_handover(a: argparse.Namespace) -> int:
+    """生成某模块的「交接清单」骨架；给了文件则做校验。"""
+    spec = _agent(a.agent)
+    if not spec:
+        return 2
+    hr(f"📤 交接清单 · {spec.no} {spec.name}")
+    print(handover.skeleton(spec))
+    if a.file:
+        p = Path(a.file)
+        if not p.is_file():
+            print(f"\n❌ 文件不存在：{a.file}")
+            return 2
+        txt = p.read_text(encoding="utf-8")
+        print()
+        print(f"  校验 {a.file}：")
+        print(handover.check_handover(txt, spec).render())
+    return 0
+
+
+def cmd_gate(a: argparse.Namespace) -> int:
+    """门禁预检：给定交付物文本（或文件），按该模块门禁标准检查。"""
+    if a.agent == "all":
+        hr("🚪 三门禁一览")
+        print(handover.gate_overview())
+        return 0
+    spec = _agent(a.agent)
+    if not spec:
+        return 2
+    if not a.file:
+        hr(f"🚪 门禁「{spec.gate or '（本模块无门禁）'}」· {spec.name}")
+        for c in spec.gate_checks:
+            print(f"  □ {c.label}")
+            print(f"      判据（命中任一即算检出）：{' / '.join(c.any_of)}")
+        print(f"  判定：python main.py gate {spec.key} <交付物文件>")
+        return 0
+    p = Path(a.file)
+    if not p.is_file():
+        print(f"❌ 文件不存在：{a.file}")
+        return 2
+    hr(f"🚪 门禁预检 · {spec.gate or spec.name}")
+    print(handover.check_gate(p.read_text(encoding="utf-8"), spec).render())
+    return 0
+
+
+def cmd_doc(a: argparse.Namespace) -> int:
+    """查看工作流里任意文档（或它的某一节）—— 供 agent 按需取原文。"""
+    loader = ModuleLoader()
+    t = loader.text(a.path)
+    if not t:
+        print(f"❌ 未找到：{a.path}")
+        print("  提示：路径相对工作流根，如 `02-服化道/引擎/TURNAROUND-STANDARD.md`")
+        return 2
+    if a.section:
+        # level=None：**任意级别**都找 —— 用户会说「取 1.6 节」，而 1.6 是 `###` 级
+        s = module_loader.section(t, a.section, level=None)
+        if not s:
+            print(f"❌ 该文档里没有含「{a.section}」的章节。可用章节：\n")
+            print(module_loader.outline(t))
+            return 2
+        print(s)
+        return 0
+    print(t)
+    return 0
+
+
+def cmd_outline(a: argparse.Namespace) -> int:
+    """列出工作流里有哪些文档（按模块分组）—— 通用检索入口。"""
+    loader = ModuleLoader()
+    if not loader.root:
+        print("❌ 未找到工作流目录")
+        return 2
+    hr("🗂 工作流文档清单（agent 的全部可读素材）")
+    for s in registry.REGISTRY:
+        docs = s.role_docs + s.ref_docs
+        if not docs:
+            continue
+        print(f"\n  【{s.no}】{s.name}")
+        for d in docs:
+            ok = "✅" if loader.exists(d) else "❌"
+            print(f"    {ok} {d}")
+    return 0
+
+
+# ─────────────────────────────────────────────────────────────
 # 参数
 # ─────────────────────────────────────────────────────────────
 
@@ -298,6 +476,35 @@ def build_parser() -> argparse.ArgumentParser:
     ex.add_argument("--snapshot", action="store_true", help="导出规则快照到 vendor/")
 
     sub.add_parser("doctor", help="环境自检")
+
+    # ── 七个流程 agent（通用运行时）──
+    sub.add_parser("agents", help="列出全部流程 agent（00-06）")
+    sub.add_parser("outline", help="列出工作流文档清单（按模块）")
+
+    ru = sub.add_parser("run", help="用任意 agent 处理输入")
+    ru.add_argument("agent", help="agent：orchestrator/script/asset/storyboard/video/audio/compliance（或编号 00-06）")
+    ru.add_argument("text", nargs="+")
+    ru.add_argument("--brief", action="store_true",
+                    help="角色文档只给目录（省 token，用于快速核对结构）")
+
+    ini = sub.add_parser("init", help="输出某 agent 的初始化指令（独立启动）")
+    ini.add_argument("agent")
+
+    rt = sub.add_parser("route", help="00 总控路由：判定输入该进哪个 agent")
+    rt.add_argument("text", nargs="+")
+
+    ho = sub.add_parser("handover", help="生成/校验某模块的交接清单")
+    ho.add_argument("agent")
+    ho.add_argument("--file", help="给了则做字段校验")
+
+    ga = sub.add_parser("gate", help="门禁预检")
+    ga.add_argument("agent", help="agent 名，或 all 看三门禁一览")
+    ga.add_argument("file", nargs="?", help="交付物文件；省略则只打印标准")
+
+    dc = sub.add_parser("doc", help="查看工作流任意文档（或某一节）")
+    dc.add_argument("path", help="相对工作流根的路径")
+    dc.add_argument("--section", help="只取含该关键词的章节")
+
     return p
 
 
@@ -309,11 +516,15 @@ def main() -> int:
         return 0
     # 无子命令时默认走 ask（支持 `python main.py "一个废土女佣兵"` 的直白用法）
     if argv[0] not in ("ask", "probe", "list", "show", "rules", "export", "doctor",
-                       "-h", "--help"):
+                       "agents", "outline", "run", "init", "route", "handover",
+                       "gate", "doc", "-h", "--help"):
         argv = ["ask"] + argv
     a = parser.parse_args(argv)
     fn = {"ask": cmd_ask, "probe": cmd_probe, "list": cmd_list, "show": cmd_show,
-          "rules": cmd_rules, "export": cmd_export, "doctor": cmd_doctor}
+          "rules": cmd_rules, "export": cmd_export, "doctor": cmd_doctor,
+          "agents": cmd_agents, "outline": cmd_outline, "run": cmd_run,
+          "init": cmd_init, "route": cmd_route, "handover": cmd_handover,
+          "gate": cmd_gate, "doc": cmd_doc}
     if not a.cmd:
         parser.print_help()
         return 0

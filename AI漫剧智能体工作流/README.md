@@ -68,11 +68,13 @@ AI漫剧智能体工作流/                      128 个文件 / 约 1326 KB
 │   ├── README.md / 00-主控智能体.md / INDEX.md
 │   └── 模板/风险报告模板.md           含未决项联动核查
 │
-├── 07-资产库Agent/                   ✅ **代码实现**（02 模块的可运行版）｜可跨机迁移
-│   ├── README.md / SYSTEM_PROMPT.md  使用说明 / Agent 行为规范
-│   ├── main.py                        CLI 入口（零依赖即可跑通全流程）
-│   ├── config.json / .env.example     运行配置 / Key 样例（Key 不入库）
-│   └── src/                          规则来源层 · 解析 · 补全 · 提示词 · 一致性 · 出图 · 资产库
+├── 07-智能体运行时/                    ✅ **代码实现**：**每个流程模块都是一个可独立运行的 agent**
+│   ├── README.md / SYSTEM_PROMPT.md   总览（7 个 agent + 通用能力）/ Agent 行为规范
+│   ├── main.py                        统一 CLI（零依赖即可跑通；含 run/init/route/gate/handover/doc）
+│   ├── config.json / .env.example      运行配置 / Key 样例（Key 不入库）
+│   └── src/  通用运行时：registry（声明式注册表）· 模块加载 · 路由 · 交接与门禁
+│             · 规则源 · 解析 · 补全 · 提示词 · 一致性 · 出图 · 资产库
+│             （承载 00 总控 + 01 剧本 + 02 服化道 + 03 分镜 + 04 视频 + 05 音频 + 06 合规）
 │
 ├── 工具/                             ✅ 自检与辅助工具
 │   ├── README.md
