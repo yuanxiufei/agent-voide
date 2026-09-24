@@ -211,6 +211,62 @@ def _run(tmp: Path) -> int:
           (not dm) and "能源步枪" not in ds, str(ds[:3]))
 
     print()
+    print("── ⑫ ⭐ 类型判定：**靠语法，不靠名词表**（表外名词也要判对）──")
+    # 实测踩到：这些句子里的名词都不在项目词表里 → 原先**全被判成角色**，
+    # 连资产名都变成整句话（「设计一柄油纸伞」→ 角色「设计一柄油纸伞」）。
+    TYPE_CASES = [
+        # 器物：靠**量词**判（汉语语法事实，不随题材失效）
+        ("设计一柄油纸伞", "prop"), ("设计一个民国密码本", "prop"),
+        ("设计一台老式留声机", "prop"), ("设计一盏煤气路灯", "prop"),
+        ("设计一只黄铜怀表", "prop"), ("设计一副乌木算盘", "prop"),
+        ("设计一枚铜制徽章", "prop"),
+        # 场景：靠**场所字结尾**判
+        ("民国上海洋行的大厅", "environment"), ("一间逼仄的弄堂阁楼", "environment"),
+        ("租界的码头仓库", "environment"), ("一座香火冷清的城隍庙", "environment"),
+        ("老城区的当铺", "environment"),
+        # 服装：靠**服饰量词**
+        ("设计一套民国旗袍", "costume"), ("设计一件亚麻衬衫", "costume"),
+        ("设计一身夜行衣", "costume"),
+        # 角色：**回归重点** —— 新规则不能把它们抢走
+        ("一个30岁的民国谍战女特工", "character"), ("穿旗袍的女人", "character"),
+        ("一个在街上的女佣兵", "character"), ("一位药铺的掌柜", "character"),
+        ("一个老练的船工", "character"), ("设计一个主角", "character"),
+        ("一个废土拾荒者", "character"), ("民国谍战剧，一位穿旗袍的女特工", "character"),
+        # ⚠️ **把字句**：「把」是介词不是量词（冒烟测试抓到的回归）
+        ("把她的头发换成银白色", "character"),
+        ("把他的脸换成苍白的", "character"),
+    ]
+    # ⚠️ **已知歧义（故意不测）**：「把他的义肢换成机械臂」——
+    #    「义肢」在本项目里**既是角色部件、也是独立道具资产（PRP_）**，
+    #    故"应为角色"或"应为道具"都有道理。把它当唯一正确答案来测是**假测试**。
+    #    实测当前判为 prop（因句尾「机械臂」命中 `PROP_WORDS`）。
+    #    若将来要定，应引入"'把'字句看**宾语**而非句尾"的规则，并先与用户确认语义。
+    wrong = [(t, nlp._detect_asset_type(t), w) for t, w in TYPE_CASES
+             if nlp._detect_asset_type(t) != w]
+    check(f"⭐ {len(TYPE_CASES)} 条类型判定全对（含表外名词 + 把字句）",
+          not wrong, str(wrong[:4]))
+
+    print()
+    print("── ⑬ 判据是「**结尾**」而不是「含」（中心语在最后）──")
+    check("「一位药铺的掌柜」→ 角色（不因中间有「药/铺」被判成道具/场景）",
+          nlp._detect_asset_type("一位药铺的掌柜") == "character")
+    check("「一个老练的船工」→ 角色（不因中间有「船」被判成场景）",
+          nlp._detect_asset_type("一个老练的船工") == "character")
+    check("`_has_place_word` 看结尾：洋行的大厅 ✓ / 药铺的掌柜 ✗",
+          nlp._has_place_word("民国上海洋行的大厅")
+          and not nlp._has_place_word("一位药铺的掌柜"))
+    check("`_tail_has` 看结尾：「药」不在「药铺的掌柜」结尾 → 不命中道具",
+          not nlp._tail_has("一位药铺的掌柜", nlp.PROP_WORDS))
+
+    print()
+    print("── ⑭ 场所后缀表**只有一份**（两处判据不得分叉）──")
+    from src import generic as _g
+    check("`nl_parser.PLACE_SUFFIX` 与 `generic.PLACE_SUFFIX` 是**同一个对象**",
+          nlp.PLACE_SUFFIX is _g.PLACE_SUFFIX)
+    check("「洋行 / 当铺 / 客栈」这类无标准后缀的场所也在表里",
+          all(w in _g.PLACE_SUFFIX for w in "铺栈驿"))
+
+    print()
     print("=" * 66)
     if FAIL:
         print(f"❌ 失败 {len(FAIL)} 项 / 共 {len(PASS) + len(FAIL)} 项：")

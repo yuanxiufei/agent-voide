@@ -11,6 +11,10 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+# ⚠️ 场所后缀表**只有一份**（在 `generic`）—— 类型判定与场所抽取必须用**同一张表**，
+#    否则两处判据会分叉（`generic` 里对 `nl_parser` 是**函数内惰性导入**，故无循环）
+from .generic import PLACE_SUFFIX
+
 # ── 词表（来源：用户素材 SYSTEM_PROMPT.md §5 风格 / §7 材质 / §8 配色）──
 
 WORLD_STYLES: dict[str, list[str]] = {
@@ -229,10 +233,25 @@ def _object_after_measure(text: str, words: list[str], span: int = 12) -> str:
     for m in re.finditer(r"(?:套|件|条|把|支|柄|台|个)([\u4e00-\u9fa5A-Za-z]{1,%d})"
                          % span, text):
         frag = m.group(1)
+        # ⚠️ **把字句**：`把他的义肢换成机械臂` 里的「把」是**介词**。
+        #    不加这条护栏会把"改角色"判成**道具**（实测：指代解析随之改错对象）。
+        #    与 `_measure_object` 同一护栏 —— 两处都出现「量词」形态，必须一致。
+        if frag[:1] in "她他它我你您咱这那其":
+            continue
         for w in words:
             if w in frag:
                 return w
     return ""
+
+
+# ⭐ 量词按"通常计量什么"分组 —— **语法信号**，与题材无关、不随题材失效
+#   （「设计一柄油纸伞」的「柄」是汉语事实，不需要知道"伞"是什么）
+COSTUME_MEASURES = "套件身袭"
+PROP_MEASURES = "把支柄台只副盏枚根杆架罐箱盒部本挺管盏座"
+NEUTRAL_MEASURES = "个张块面"
+_MEASURE_RE = re.compile(
+    r"([%s%s%s])([\u4e00-\u9fa5A-Za-z]{1,12})"
+    % (COSTUME_MEASURES, PROP_MEASURES, NEUTRAL_MEASURES))
 
 
 # 表情 / 动作（EXP_ / POS_）—— 必须挂在角色上，故识别优先于「有人物词就是角色」
@@ -289,8 +308,82 @@ def short_name(raw: str) -> str:
     return (s[:20] or "").strip()
 
 
+def _measure_object(text: str, span: int = 12) -> tuple[str, str]:
+    """找「量词 + 宾语」→ `(量词定型, 宾语片段)`。
+
+    ⭐ **量词是"语法信号"**：哪些量词计量衣物、哪些计量器物，是**汉语的语法事实**，
+    有限且**与题材无关** —— 不会像名词表那样"用户换个题材就失效"。
+    这正是本项目通用性的支点：**能靠语法判的，绝不靠词表**。
+
+    实测踩到（加这个的原因）：
+      · 「设计一柄**油纸伞**」→ 伞不在 `PROP_WORDS` → 被当成**角色**，
+        连资产名都变成整句话；
+      · 「设计一个民国**密码本**」「设计一台老式**留声机**」同理。
+
+    返回的定型 ∈ `costume` / `prop` / `""`（中性量词，需再看人物信号）。
+
+    ⚠️ **必须排除"把字句"** —— 实测踩到（冒烟测试抓出来的）：
+    `把她的头发换成银白色` 里的「**把**」是**介词**（把字句），不是量词；
+    不加护栏会把"改发色"判成**道具**，于是指代「她」被解析到 `PRP_001` 上。
+    判据：量词后面紧跟**代词/指代词**（她他它我你您咱这那其）→ 跳过，继续往后找。
+    """
+    for m in _MEASURE_RE.finditer(text or ""):
+        q, frag = m.group(1), m.group(2)
+        if frag[:1] in "她他它我你您咱这那其":
+            continue                                   # 把字句/介词结构，不是量词
+        if q in COSTUME_MEASURES:
+            return "costume", frag
+        if q in PROP_MEASURES:
+            return "prop", frag
+        return "", frag                                # 中性量词（个/张/块…）
+    return "", ""
+
+
+def _has_place_word(text: str) -> bool:
+    """某个小句**以场所字结尾** → 视为场景。
+
+    ⭐ 同样是**结构信号**（`PLACE_SUFFIX` 是**字**表，不是词表）：
+    「民国上海洋行的大**厅**」→「厅」结尾 → 场景 ✓。
+
+    ⚠️ 判据是"**以**场所字结尾"，**不是**"**含**场所字" —— 实测踩到两次：
+      · 「一位药铺**的**掌柜」：中间有「铺」→ 含判据会判成场景，但中心语是「掌柜」；
+      · 「一个老练**的**船工」：同理，「船」不是中心语。
+    **汉语名词短语的中心语在最后**，故只看每个小句的**结尾字**。
+    （同一坑在 `generic.prep_place` 也踩过 —— 那里已注明"含判据会把『在**进行**改革』
+    抽成场所"，两处现已统一为"以结尾判"。）
+
+    ⚠️ 调用方**必须先确认没有人物信号** —— 否则「一个在**街**上的女佣兵」会被判成场景。
+    """
+    for seg in re.split(r"[，,。；;！!？?、\s]", text or ""):
+        seg = (seg or "").rstrip("上里中内外的")
+        if len(seg) >= 2 and seg[-1] in PLACE_SUFFIX:
+            return True
+    return False
+
+
+def _tail_has(text: str, words) -> str:
+    """词表命中要求落在**小句结尾** → 返回命中的词（没有则空串）。
+
+    ⚠️ 不能用「含」—— 实测：「一位**药铺**的掌柜」因 `PROP_WORDS` 里有**单字「药」**
+    被判成道具；「民国上海洋**行**」也会因「行」这类字命中别的表。
+    这与 `_has_place_word` 是**同一条语法事实**：**汉语名词短语的中心语在最后**，
+    故"资产是什么"应由**结尾**决定，不是"句中出现过什么字"。
+    """
+    for seg in re.split(r"[，,。；;！!？?、\s]", text or ""):
+        for w in words:
+            if w and seg.endswith(w):
+                return w
+    return ""
+
+
 def _detect_asset_type(text: str) -> str:
-    """判定资产类型。**顺序即优先级**，每一步的理由见行内注释。"""
+    """判定资产类型。**顺序即优先级**，每一步的理由见行内注释。
+
+    ⭐ 通用性原则（2026-09-24）：**能靠语法/结构判的，绝不靠名词表**。
+    凡是"因为某个名词不在我们的表里就判错"的地方，都是「任何一部小说都行」
+    的漏洞。故本函数里有三道**结构信号**（量词 / 场所字 / 人物信号），
+    它们不随题材失效。
+    """
     # ① 表情 / 动作：带「集 / 图 / 表」标记，**无歧义**，且优先于角色 ——
     #    「给女佣兵建表情集」含「女」，若先判人物词会被误判成角色。
     if any(k in text for k in EXPRESSION_WORDS):
@@ -304,20 +397,50 @@ def _detect_asset_type(text: str) -> str:
     if _object_after_measure(text, PROP_WORDS):
         return "prop"
 
-    # ③ 人物信号（性别 / 年龄）—— ③④⑤ 都要用它做护栏
+    # ③ 人物信号（性别 / 年龄）—— 只有**中性量词**与场景判定要它做护栏。
     has_person = bool(_find_gender(text)) or bool(re.search(r"\d{1,3}\s*岁", text))
 
-    # ④ 场景**名词**（不含世界观形容词）—— 有明确空间名词、且句中不是在描述某个人
+    # ④ ⭐ **量词定型**（结构信号，**不受人物信号影响** —— 这是②的设计初衷：
+    #    「给女佣兵设计一件风衣」里有「女」，但它要的是服装资产）
+    kind, frag = _measure_object(text)
+    # ⚠️ 但**宾语本身以场所字结尾时要让位**：量词是"主要计量什么"，不是排他的 ——
+    #    「一**座**香火冷清的城隍**庙**」的「座」也计量建筑。实测踩到：不让位的话
+    #    它会被判成道具。（「座」既是器物量词也是建筑量词，靠宾语结尾字消歧。）
+    if kind and not (frag and frag[-1] in PLACE_SUFFIX):
+        return kind
+
+    # ⑤ ⭐ 句中点了**职业词** → 角色（「一位药铺的掌柜」「在码头当搬运工的商人」）
+    #    ⚠️ 必须在场景判定**之前**：否则「药**铺**的掌柜」会因「铺」是场所字被判成场景。
+    #    用 `JOBS` 词表而不是 `_find_occupation()` —— 后者的「的」兜底会把
+    #    「洋行的大厅」也抽成"职业"，反而把场景判错。
+    if any(j in text for j in JOBS):
+        return "character"
+
+    # ⑥ 场景**名词**（不含世界观形容词）—— 有明确空间名词、且句中不是在描述某个人
     if not has_person and any(k in text for k in SCENE_WORDS):
         return "environment"
+
+    # ⑦ ⭐ **场所字结尾** → 场景（结构信号；⑧ 之前必须先过这一关，
+    #    否则「民国上海洋行的大厅」会掉进 ⑧ 被当成道具）
+    if not has_person and _has_place_word(text):
+        return "environment"
+
     if not has_person and any(k in text for k in ("场景", "环境")):
         return "environment"
 
-    # ⑤ 兜底：道具 / 服装关键词
-    if any(w in text for w in PROP_WORDS) and not has_person:
+    # ⑧ 兜底：道具 / 服装关键词（⚠️ 用 `_tail_has` 按**结尾**命中，不用「含」）
+    if not has_person and _tail_has(text, PROP_WORDS):
         return "prop"
-    if any(w in text for w in COSTUME_WORDS) and not has_person:
+    if not has_person and _tail_has(text, COSTUME_WORDS):
         return "costume"
+
+    # ⑨ ⭐ **中性量词**（个/张/块…）—— 可人可物，故要两道护栏：
+    #    · `has_person`：句中在描述人 → 是角色（「一个30岁的女佣兵」）
+    #    · **宾语抽得出职业** → 是角色（「设计一个主角」不该变成道具）
+    #    两道都过才按"器物"处理（「设计一个民国密码本」→ 道具）。
+    if not has_person and frag and not _find_occupation(frag):
+        return "prop"
+
     return "character"
 
 
