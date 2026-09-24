@@ -324,6 +324,12 @@ def cmd_drift(a: argparse.Namespace) -> int:
     except Exception:                                                # noqa: BLE001
         author = {}
 
+    # §一 的 LOCK_* 清单（§六「锁定清单」判据用）
+    try:
+        valid_locks = set(ag.rules.lock_names)
+    except Exception:                                                # noqa: BLE001
+        valid_locks = set()
+
     if a.file:
         p = Path(a.file)
         if not p.is_file():
@@ -331,13 +337,15 @@ def cmd_drift(a: argparse.Namespace) -> int:
             return 2
         hr(f"🧭 漂移检测 · 交付物 {a.file}")
         txt = p.read_text(encoding="utf-8")
-        rep = drift.check_text(txt, known, scope=str(a.file))
+        rep = drift.check_text(txt, known, scope=str(a.file),
+                               valid_locks=valid_locks)
         rep.registry_gap = []
         if author:
             rep.anchor = drift.check_anchors([(str(a.file), txt)], author)
     else:
         hr("🧭 漂移检测 · 全库（§六 全局一致性守护）")
-        rep = drift.scan_output(ag.cfg.root, known, authoritative=author)
+        rep = drift.scan_output(ag.cfg.root, known, authoritative=author,
+                                valid_locks=valid_locks)
         rep.registry_gap = gap
 
     rep.type_conflict = drift.check_conflicts(ag.cfg.root)

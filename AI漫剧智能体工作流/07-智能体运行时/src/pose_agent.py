@@ -168,8 +168,8 @@ def build_card(parsed, asset_id: str, now: str) -> AssetCard:
         source=parsed.raw, created_at=now, updated_at=now,
         world=parsed.world,
         parent_asset=owner,
-        locked=list(MUTABLE_PARTS),
-        editable=list(MUTABLE_PARTS),
+        # ⚠️ 原写法 `locked = editable = MUTABLE_PARTS` —— 语义反转（见 expression_agent）。
+        #    现由 `agent._create` 按 §四·补 A/B 统一设置。
     )
 
 

@@ -167,6 +167,46 @@ $ python main.py drift output/EP01-分镜表.md
 > 画质参数与电影感具体化就在该文件 **§六**。现权威来源写作
 > 「`VISUAL_BIBLE.md` §4.8（画风/LUT）+ `TURNAROUND-STANDARD.md` §六（画质参数）」。
 
+### ⭐ 锁定系统 / 修改引擎（`LOCK-SYSTEM.md` §三「修改执行四步（**强制**）」）
+
+该文档自述「**这是连续生产的核心机制**」，其 §三 四步此前**一步都没实现**
+（`AssetCard.locked` 字段定义了但无人写入）。现已落地：
+
+| §三 步骤 | 实现 |
+|---|---|
+| STEP 1 解析指令 → LOCK/MODIFY 映射 | `lock.parse_directive()` —— 读 §二 的 17 行「用户说 → 解释」表（**两种表达形式**都认：`K=V` 与 `…全 LOCK`）|
+| STEP 2 **冲突检测** | `lock.detect_conflicts()` —— 并入 Gate 报告 + 输出说明 |
+| STEP 3 受控生成 | 锁定项写进 `card.locked`（进 prompt 一致性约束）|
+| STEP 4 **记录变更** | `lock.append_entry()` → `output/CHANGELOG.yaml`（`changed`/`unchanged`/`reason`，字段与模板**逐字对齐**）|
+
+**默认锁什么**（依权威，不是猜）：
+
+| 来源 | 内容 | 落到本项目 |
+|---|---|---|
+| `LOCK-SYSTEM.md` §四·补 A「**终身固定核心识别特征（100% 不可改动）**」 | 核心骨相 · 五官轮廓 · **瞳色** · 标志性永久识别点 · 微表情习惯 | `card.locked` = `LOCK_FACE` / `LOCK_CHARACTER` / `LOCK_EXPRESSION` |
+| 同文件 §四·补 B「剧情适配变量项（**各状态卡之间可不同**）」 | 发色/发型/毛发 · 身形/体态 · 穿搭/配饰 | `card.editable` = `LOCK_HAIR` / `LOCK_BODY` / `LOCK_COSTUME` / `LOCK_PROP` |
+
+于是最该报的那一类约束真的会响：
+
+```bash
+$ python main.py "把她的瞳孔换成褐色"
+  ⚠️ [LOCK_CONFLICT] 锁定项冲突：**瞳色**（本次将改动：eye_color）——
+     §四·补 A 列为「**100% 不可改动**」；原文：「修改本组 = **重新设计角色**，
+     必须递增主版本号并通知全项目」。
+     若只是当前状态（造型/服装/表情）变化，请改 `stage_variables` 而非这些字段
+$ python main.py "把她的头发换成银白色"
+  （不报 —— §四·补 B 明文「发色变化」是可变的）✅ 不误报
+```
+
+> ⚠️ **修复了 6 处"抄文档举例当默认值"**：6 个 agent 各写了一套默认锁定集，**每套都错** ——
+> `character` 抄了 `ASSET_CARD.yaml` 第 104 行**注释里的举例**（`例：["FACE","HAIR","BODY"]`，
+> 且 HAIR 不在 §四·补 A、漏了真正不可改的瞳孔）；`costume`/`prop` 用了
+> `CUT`/`LAYER_ORDER`/`STRUCTURE` 这类**不是 §一 `LOCK_*`** 的名字；`scene` 把 §32 的
+> **中文空间要素**当锁定项；`expression`/`pose` 则**语义反转**
+> （`locked = editable = MUTABLE_PARTS`，而注释写着"只有这几项**允许**改"）。
+> 现已统一为从 §四·补 A/B 推导，并有自检（`validate_field_map` / `validate_lifelong_map`）
+> 保证代码里的 `LOCK_*` 名一定在 §一 清单内。
+
 **批量的实现取向**（值得说明）：**不做"批量专用流水线"**，而是把「一次 10 个废土 NPC」
 **展开成 10 条自然语言请求**，各自走**正常创建流程** —— 于是每一项都自动获得同一套
 Gate / 指纹 / 版本 / 落盘，不会出现「批量生成的与单个生成的不一样」这种最难查的偏差。
@@ -233,11 +273,13 @@ python main.py "把她的眼睛换成琥珀色" --reference output/images/CHR_00
 │   ├── character_agent.py / prop_agent.py / costume_agent.py
 │   ├── overrides.py         本机覆盖层（`prompts/overrides/`）
 │   ├── drift.py             ⭐ §六 漂移检测（ID 是否都在总表、是否自造 ID）
+│   ├── lock.py              ⭐ 锁定系统 / 修改引擎（§一/§二/§三/§四·补 A·B）
 │   ├── image_provider.py / asset_manager.py / llm_client.py / agent.py
 │   └── __init__.py
 ├── tests/
 │   ├── test_providers.py   ⭐ 出图 Provider 的**离线合约测试**（本地桩服务器，无需 Key）
-│   └── test_drift.py       ⭐ 漂移检测测试（**故意注入漂移**，证明它真会报 ❌）
+│   ├── test_drift.py       ⭐ 漂移检测测试（**故意注入漂移**，证明它真会报 ❌）
+│   └── test_lock.py        ⭐ 锁定系统测试（**必须报 / 不得误报**两类注入用例）
 ├── prompts/               本地覆盖目录（默认走工作流规则）
 ├── assets/ / output/      资产卡 / 生成物（均 gitignore 或运行态）
 └── examples/              **六份**样例资产卡（角色 / 服装 / 道具 / 场景 / 表情 / 动作）
@@ -285,8 +327,11 @@ cp .env.example .env      # 填入 Key（.env 已在 .gitignore）
 | **批量生产**（蓝图 §十八） | ✅ 已实现（`batch`，见 §四） |
 | **场景 360° 全景基准**（§4.6） | ✅ 已实现（`panorama`，见 §四） |
 | **场景 S01–S06 六角度 + 索引表**（§4.1） | ✅ 已实现（`angles`，见 §四） |
+| **锁定系统 / 修改引擎**（`LOCK-SYSTEM.md` §三「修改执行四步（强制）」） | ✅ 已实现（`src/lock.py`）—— **36 项测试**（含「必须报 / 不得误报」两类注入用例） |
+| **§六 漂移检测**（ID 在不在总表 / 是否自造 ID / **风格锚点漂移** / **锁定项合法性**） | ✅ 已实现（`drift`）—— **38 项测试** |
+| 其余四张单子 | 见 §六 表（ID 总表 ✅ / 风格锚点 ✅ / 锁定清单 ✅ / 变更记录 ✅） |
 | **产出核验**（卡/提示词/图/索引表） | ✅ 已实现（`verify`）—— 只核验**客观可验证**项 |
-| **§六 漂移检测**（ID 在不在总表 / 是否自造 ID / **风格锚点漂移**） | ✅ 已实现（`drift`）—— **32 项测试**（`tests/test_drift.py`，含**故意注入的漂移**）|
+| **§六 漂移检测**（ID 在不在总表 / 是否自造 ID / **风格锚点漂移**） | ✅ 已实现（`drift`）—— **38 项测试**（`tests/test_drift.py`，含**故意注入的漂移**）|
 | §六 指向的「风格锚点表」 | ✅ **错引用已订正**（原指 `TURNAROUND-STANDARD.md` §七，实为**差一节**：内容在 §六 + `VISUAL_BIBLE.md` §4.8）；运行时仍**不依赖该表**，直接按权威规则里的锚点判定 |
 | 交接清单里人手写的 `风格锚点：` 字段 | ❌ 不判定 —— 自由文本（「与 02 一致」/「见上」/「无」等同义不同字），无法确定性比对 |
 | **图像语义比对**（图与图是否同一角色/空间） | ❌ **未实现，且不建议硬做**（见下） |

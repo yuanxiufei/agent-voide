@@ -122,10 +122,8 @@ def complete(card: AssetCard, parsed, rules, llm=None) -> tuple[AssetCard, list[
                   [x for x in [vd.structure.split("+")[0].strip() if vd.structure else "",
                                vd.surface_texture.split("，")[0]] if x])
 
-    if not card.locked:
-        card.locked = ["STRUCTURE"]
-    if not card.editable:
-        card.editable = ["COLOR", "WEAR"]
+    # ⚠️ 原写法 `["STRUCTURE"]` / `["COLOR","WEAR"]` **不是 §一 的 `LOCK_*` 名**。
+    #    现由 `agent._create` 统一按权威设置；道具类无 §四·补 A/B 对应清单 → 不臆造。
 
     notes.append(f"道具必填字段：{len(rules.prop_fields)} 项（由一致性检查校验覆盖率）")
     return card, notes

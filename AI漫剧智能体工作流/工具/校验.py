@@ -698,6 +698,22 @@ MECHANISM_RULES = [
         "keyword": "不依赖那张表",
         "must_in": ["07-智能体运行时/README.md"],
     },
+    # ── 锁定系统 / 修改引擎（2026-09-24：`LOCK-SYSTEM.md` §三 曾是"一步都没实现"）──
+    {
+        "name": "07 运行时：§三「修改执行四步（强制）」已实现",
+        "keyword": "修改执行四步（**强制**）",
+        "must_in": ["07-智能体运行时/README.md"],
+    },
+    {
+        "name": "07 运行时：默认锁定集依 §四·补 A（不是抄注释举例）",
+        "keyword": "抄文档举例当默认值",
+        "must_in": ["07-智能体运行时/README.md"],
+    },
+    {
+        "name": "07 运行时：锁定系统有「必须报 / 不得误报」两类测试",
+        "keyword": "test_lock.py",
+        "must_in": ["07-智能体运行时/README.md"],
+    },
     # ── 风格锚点表的**权威来源**（2026-09-24 订正）──
     # 原先（§六 / 根 README / ID-REGISTRY）都指向 `TURNAROUND-STANDARD.md` §七，
     # 而 §七 是「光影设计的三个来源与分工」—— 实为**差一节**：画质参数与
@@ -1377,6 +1393,12 @@ def check_numeric_claims(files):
         for m in LN.finditer(t):
             line = line_text(t, m.start())
             if "→" in line or "->" in line or is_before_after(line, LN_NUM):
+                continue
+            # ⚠️ 排除「**第** N 行」这类**位置引用** —— 它是"某内容在第几行"，
+            #    不是"这个文件有 N 行"。两者判据不同，混在一起会给出**错的修改建议**
+            #    （实测踩到：`ASSET_CARD.yaml 第 104 行注释`被读成"行数声明"，
+            #     并建议"应改为 169 行"—— 那会把位置改成数量，越改越错）。
+            if re.search(r"第\s*%s\s*行" % re.escape(m.group(1)), line):
                 continue
             names = [os.path.basename(x) for x in NAME.findall(line)]
             names = [x for x in names if x in uniq]

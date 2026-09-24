@@ -416,11 +416,11 @@ def complete(card: AssetCard, parsed, rules, llm=None) -> tuple[AssetCard, list[
                      f"点缀 {p['palette4_cn'][2]} / 金属 {p['palette4_cn'][3]}")
     vd.palette4_en = p["palette4_en"]
 
-    # ⑥ 锁定策略（依 ASSET_CARD 语义）
-    if not card.locked:
-        card.locked = ["FACE", "HAIR", "BODY"]
-    if not card.editable:
-        card.editable = ["COSTUME", "EXPRESSION", "POSE"]
+    # ⑥ 锁定策略 —— ⚠️ **不在此处设**：原写法 `["FACE","HAIR","BODY"]` 正是
+    #    `ASSET_CARD.yaml` 第 104 行**注释里的举例**（把文档举例当默认值），
+    #    且 HAIR 不在 §四·补 A（头发可改）、真正不可改的瞳色反而漏了。
+    #    现统一由 `lock.default_locks/default_editable`（依 §四·补 A/B）在
+    #    `agent._create` 一处设置 —— 6 个 agent 各写一套必然发散。
 
     # ⑦ 可选 LLM 精修
     if llm is not None and getattr(llm, "available", False):

@@ -127,6 +127,7 @@ class DriftReport:
     malformed: list[tuple[str, str]] = field(default_factory=list)   # 格式非法
     type_conflict: list[str] = field(default_factory=list)           # 一号两类型
     registry_gap: list[str] = field(default_factory=list)  # ⚠️两张单子不一致
+    bad_locks: list[str] = field(default_factory=list)     # ❗不是 §一 的 LOCK_*
     orphans: list[str] = field(default_factory=list)       # ℹ️登记了但无人引用
     style_mismatch: list[tuple[str, str]] = field(default_factory=list)  # ⚠️字面风格
     foreign: list[tuple[str, str]] = field(default_factory=list)     # 外来前缀
@@ -136,6 +137,7 @@ class DriftReport:
     @property
     def ok(self) -> bool:
         return not (self.unregistered or self.malformed or self.type_conflict
+                    or self.bad_locks
                     or (self.anchor is not None and not self.anchor.ok))
 
     def render(self) -> str:
@@ -157,6 +159,13 @@ class DriftReport:
             L.append(f"  ❌ **一号两类型：{len(self.type_conflict)} 个**")
             for t in self.type_conflict:
                 L.append(f"      {t}")
+        if self.bad_locks:
+            L.append(f"  ❌ **不是 §一 锁定清单里的项：{len(self.bad_locks)} 个**")
+            for t in self.bad_locks[:10]:
+                L.append(f"      {t}")
+            L.append("      依据：§六「当前所有 `LOCK_*`」+ `LOCK-SYSTEM.md` §一"
+                     "（本项目 6 个 agent 曾硬编码 `CUT`/`STRUCTURE`/「建筑」等"
+                     "**不是锁定项**的名字当锁定项）")
         if self.registry_gap:
             L.append(f"  ⚠️ 两张单子不一致：{len(self.registry_gap)} 处")
             for t in self.registry_gap[:10]:
@@ -229,12 +238,37 @@ def _style_mismatch(token: str) -> str:
     return ""
 
 
-def check_text(text: str, known: set[str], scope: str = "（文本）") -> DriftReport:
+# §六 的「**锁定清单**」判据（`LOCK-SYSTEM.md` §一 的 13 项）
+LOCK_RE = re.compile(r"\bLOCK_[A-Z][A-Z_]*")
+
+
+def check_locks(text: str, valid: set[str]) -> list[str]:
+    """交付物里出现的 `LOCK_*` 是否都在 §一 的清单里。
+
+    ⚠️ 这一条能抓到一类**真实发生过的错**：本项目 6 个 agent 曾各自硬编码
+    `["CUT","LAYER_ORDER"]` / `["STRUCTURE"]` / `["建筑","门窗"]` 当锁定项 ——
+    它们**都不是 §一 的 `LOCK_*`**。若当时有这个检查，会当场报出来。
+    """
+    if not valid:
+        return []
+    out: list[str] = []
+    for m in LOCK_RE.finditer(text or ""):
+        t = m.group(0)
+        if t not in valid and t not in out:
+            out.append(t)
+    return out
+
+
+def check_text(text: str, known: set[str], scope: str = "（文本）",
+               valid_locks: set[str] | None = None) -> DriftReport:
     """检查**一段文本**里引用的 ID 是否都在总表中。
 
     :param known: ID 总表（主 ID 集合；只需含主 ID，派生后缀自动放行）
+    :param valid_locks: §一 的 `LOCK_*` 清单（给了才做锁定项合法性检查）
     """
     rep = DriftReport(scope=scope, known=len(known))
+    if valid_locks:
+        rep.bad_locks = check_locks(text, valid_locks)
     for t in extract(text):
         rep.refs.append(t)
         kind = type_of(t)
@@ -377,7 +411,8 @@ def anchor_items(root: Path) -> list[tuple[str, str]]:
 
 
 def scan_output(root: Path, known: set[str],
-                authoritative: dict[str, str] | None = None) -> DriftReport:
+                authoritative: dict[str, str] | None = None,
+                valid_locks: set[str] | None = None) -> DriftReport:
     """扫全部交付物（`output/` 下的提示词包 / 索引表 / 元数据）做漂移检测。
 
     :param authoritative: 权威风格锚点（来自工作流规则）。给了才做锚点一致性核验。
@@ -397,7 +432,8 @@ def scan_output(root: Path, known: set[str],
             txt = f.read_text(encoding="utf-8", errors="replace")
         except Exception:                                            # noqa: BLE001
             continue
-        span = check_text(txt, known, scope=str(f.relative_to(root)))
+        span = check_text(txt, known, scope=str(f.relative_to(root)),
+                          valid_locks=valid_locks)
         for t in span.refs:
             if t not in seen_tokens:
                 seen_tokens.append(t)
@@ -406,8 +442,10 @@ def scan_output(root: Path, known: set[str],
         rep.unregistered += span.unregistered
         rep.malformed += span.malformed
         rep.foreign += span.foreign
+        rep.bad_locks += span.bad_locks
     # 去重保序
     rep.unregistered = list(dict.fromkeys(rep.unregistered))
+    rep.bad_locks = list(dict.fromkeys(rep.bad_locks))
     rep.refs = seen_tokens
     # 库里登记但无人引用
     rep.orphans = sorted(known - referenced)

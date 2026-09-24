@@ -114,10 +114,9 @@ def complete(card: AssetCard, parsed, rules, llm=None) -> tuple[AssetCard, list[
     _set_if_empty(vd, "signature_points",
                   [preset["silhouette"].split("，")[0], preset["accessory"].split("、")[0]])
 
-    if not card.locked:
-        card.locked = ["CUT", "LAYER_ORDER"]
-    if not card.editable:
-        card.editable = ["COLOR", "WASH"]
+    # ⚠️ 原写法 `["CUT","LAYER_ORDER"]` / `["COLOR","WASH"]` **不是 §一 的 `LOCK_*` 名**
+    #    （§一 只有 LOCK_COSTUME 等 13 项）。现由 `agent._create` 统一按权威设置；
+    #    服装类无 §四·补 A/B 对应清单 → 不臆造（返回空）。
 
     need = rules.costume_fields
     notes.append(f"服装必填字段 {len(need)} 项：" + "、".join(need[:8]) + "…")

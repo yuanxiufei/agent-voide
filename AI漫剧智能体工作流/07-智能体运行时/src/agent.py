@@ -32,6 +32,7 @@ from . import (batch as batch_mod, character_agent, costume_agent,
 from .asset_manager import AssetManager, now_str
 from .consistency import (ConsistencyReport, check_modify_scope, check_required,
                           check_text_risk, full_check, text_risk_checklist)
+from . import lock
 from .image_provider import get_provider, png_size
 from .llm_client import LLMClient
 from .prompt_engine import build_prompts
@@ -535,6 +536,14 @@ class DramaAssetAgent:
                              world=parsed.world)
 
         card, notes = agent.complete(card, parsed, self.rules, self.llm)
+        # ⭐ 锁定 / 可变集**在一处设置**，依权威推导：
+        #    `locked`   ← §四·补 A「终身固定核心识别特征（100% 不可改动）」
+        #    `editable` ← §四·补 B「剧情适配变量项（各状态卡之间可不同）」
+        # ⚠️ 原先是 6 个 agent 各写一套，**每套都错**（抄注释举例 / 名字不在 §一 /
+        #    语义反转 / 把中文空间要素当锁定项）—— 详见 `lock.default_locks()`。
+        card.locked = card.locked or lock.default_locks(self.rules, card.type)
+        card.editable = card.editable or lock.default_editable(self.rules, card.type)
+
         en, cn, neg = build_prompts(card, self.rules)
         notes.extend(self._override_notes())
 
@@ -546,6 +555,13 @@ class DramaAssetAgent:
         path = self.am.save(card)
         p = self.am.write_prompt(card)
         m = self.am.write_metadata(card, result)
+
+        # §三 STEP 4 对**首次建立**同样适用 —— 模板首条即
+        # `v1 · changed: ["初次生成"] · reason: "项目启动，建立 Character DNA"`，
+        # 故创建时也追加一条（否则"每条版本都有记录"这个不变量从开始就不成立）。
+        lock.append_entry(self.root, asset=card.id, version=card.version,
+                          changed=["初次生成"], unchanged=[],
+                          reason=f"创建：{parsed.raw}")
 
         return {
             "operation": "create", "asset_id": aid, "type": card.type,
@@ -576,6 +592,26 @@ class DramaAssetAgent:
 
         changes = self._apply_changes(new, parsed)
 
+        # ── §三「修改执行四步（强制）」的 STEP 1 / STEP 2 ──
+        #    STEP 1 解析指令 → LOCK/MODIFY 映射（§二 的自然语言 → 锁定表）
+        #    STEP 2 冲突检测 → 改到锁定项就**列出来提示**（此前完全没有）
+        directive = lock.parse_directive(parsed.raw, self.rules)
+        lk = lock.detect_conflicts(old, parsed.change_fields or list(changes),
+                                   self.rules, directive)
+        # 锁定/可编辑终于有了落点（`AssetCard.locked` 字段此前定义了但无人写入）
+        # ⚠️ `locked` 只写**指令明确声明的** LOCK 项（§二 的 `X=LOCK`）——
+        #    **不能**写成"全部减 changed"，那会把"上次没改到的项"当锁定，
+        #    于是用户下一次**明确要求**改它时被误报成"锁定项冲突"（实测踩到）。
+        from_directive = [f"LOCK_{n}" for n, v in directive.items()
+                          if v.upper() == "LOCK"]
+        new.locked = sorted(set(from_directive) | set(old.locked or []) ) \
+            if from_directive else list(old.locked or [])
+        # 明确要求改的项 → 解除锁定
+        new.locked = [x for x in new.locked
+                      if x not in {f"LOCK_{n}" for n in lk.changed
+                                   if directive.get(n, "").upper() == "MODIFY"}]
+        new.editable = [f"LOCK_{n}" for n in lk.changed]
+
         # 改完重新出 Prompt（prompt 必须反映新设定）
         build_prompts(new, self.rules)
 
@@ -583,6 +619,9 @@ class DramaAssetAgent:
         rep = check_modify_scope(old, new, parsed.change_fields or list(changes))
         rep.issues.extend(check_required(new, self.rules).issues)
         rep.issues.extend(check_text_risk(new.prompt_en, new.negative_prompt).issues)
+        # §三 STEP 2 的冲突项并入 Gate 报告（**提示级**，不阻断 —— 原文说"提示用户"）
+        for c in lk.conflicts:
+            rep.add("warn", "LOCK_CONFLICT", f"锁定项冲突：{c}")
 
         result = self._maybe_generate(new, generate)
         self.am.save(new)
@@ -602,6 +641,21 @@ class DramaAssetAgent:
                          f"但按措辞判定应为 `{r.asset_type}` —— "
                          f"库里似乎没有该类型的资产，请确认改对了对象")
 
+        # ── §三 STEP 4「记录变更」：追加 CHANGELOG（**强制步骤**）──
+        #    模板 §项目管理 明文：「changed / unchanged 必须完整，不得省略」，
+        #    故即使为空也显式写出 `[]`（本模块的 `append_entry` 保证这点）。
+        cl = lock.append_entry(self.root, asset=new.id, version=new.version,
+                               changed=lk.changed, unchanged=lk.unchanged,
+                               reason=parsed.raw)
+        notes.append(f"📝 变更记录已追加（§三 STEP 4）：`{lock.CHANGELOG_REL}` ｜ "
+                     f"changed={lk.changed or '[]'} ｜ unchanged {len(lk.unchanged)} 项")
+        # §三 STEP 2 的冲突**必须说出来**（原文：「列出…并提示用户」）
+        if lk.conflicts:
+            notes.append(f"⚠️ **锁定项冲突 {len(lk.conflicts)} 处**（§三 STEP 2）—— "
+                         f"本次变更会改动卡片上已锁定的项；"
+                         f"若确实要改，请明说「只改 X」或先解除锁定")
+        notes.extend(lk.notes)
+
         return {
             "operation": "modify", "ok": True, "asset_id": aid,
             "notes": notes,
@@ -611,6 +665,9 @@ class DramaAssetAgent:
             "card": new.to_dict(), "prompt_en": new.prompt_en,
             "prompt_cn": new.prompt_cn, "negative": new.negative_prompt,
             "images": result.image_paths, "consistency": rep,
+            "lock": {"directive": lk.directive, "changed": lk.changed,
+                     "unchanged": lk.unchanged, "conflicts": lk.conflicts,
+                     "changelog": str(cl)},
             "files": {"card": str(self.am.card_path(aid, new.version)),
                       "prompt": str(p), "metadata": str(m)},
         }

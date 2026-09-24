@@ -533,6 +533,8 @@ def build_card(parsed, asset_id: str, now: str) -> AssetCard:
         name=parsed.name or preset["name"],
         source=parsed.raw, created_at=now, updated_at=now,
         world=parsed.world,
-        # 场景的「锁定项」= §32 的 6 项建筑空间要素
-        locked=list(LOCKED_BY_DEFAULT),
+        # ⚠️ 原写法把 §32 的**中文空间要素**（建筑/门窗/家具…）塞进 `card.locked` ——
+        #    那不是 §一 的 `LOCK_*` 名。§32 的要素锁定**仍然生效**，但走的是
+        #    `scene_dna.locked_elements`（进 prompt 的「copy these words verbatim」段），
+        #    与 `card.locked`（LOCK_* 系统）是**两套东西**，不该混。
     )

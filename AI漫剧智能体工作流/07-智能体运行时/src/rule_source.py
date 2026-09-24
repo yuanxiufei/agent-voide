@@ -47,6 +47,8 @@ RULE_FILES = {
     "router": "00-总控路由.md",
     # ⚠️ 在 `模板/` 下，不在 `引擎/` 下（实测按常识猜路径踩到过）
     "index_templates": "02-服化道/模板/INDEX-TEMPLATES.md",
+    # 锁定系统与修改引擎（自述「这是连续生产的核心机制」）
+    "lock": "02-服化道/引擎/LOCK-SYSTEM.md",
 }
 
 
@@ -676,6 +678,43 @@ class RuleSource:
         rep.detail = ("一致" if rep.ok else
                       f"漂移：缺失 {len(rep.missing)} · 变更 {len(rep.changed)}")
         return rep
+
+    # ── 锁定系统（`LOCK-SYSTEM.md`；见 `src/lock.py`）──
+    @property
+    def lock_names(self) -> list[str]:
+        """§一「可锁定资产清单」的 13 个 `LOCK_*`。
+
+        代码块形态为「`LOCK_XXX` + 空白 + 中文说明」→ 取每行首个 token。
+        """
+        if "locks" not in self._cache:
+            t = self.raw("lock")
+            i = _find_heading(t, "可锁定资产清单")
+            out: list[str] = []
+            for b in _code_block_after(t, i):
+                tok = b.strip().split()[0] if b.strip() else ""
+                if tok.startswith("LOCK_") and tok not in out:
+                    out.append(tok)
+            self._cache["locks"] = out
+        return self._cache["locks"]  # type: ignore[return-value]
+
+    @property
+    def nl_lock_map(self) -> list[tuple[str, str]]:
+        """§二「自然语言 → 锁定映射表」→ `[(用户说, 解释), …]`（16 行）。
+
+        ⚠️ 这张表是**锁定的实际含义**：用户说「只换发型」→ 其余全部 LOCK。
+        不解析它，锁定系统就只是一串没人用的常量（本项目此前正是如此）。
+        """
+        if "nl_lock" not in self._cache:
+            t = self.raw("lock")
+            i = _find_heading(t, "自然语言 → 锁定映射表")
+            out: list[tuple[str, str]] = []
+            for r in _table_after(t, i):
+                # 表头形如「用户说 / 自动解释」；取前两列，不写死表头字面
+                vals = list(r.values())
+                if len(vals) >= 2 and vals[0] and vals[1]:
+                    out.append((vals[0], vals[1]))
+            self._cache["nl_lock"] = out
+        return self._cache["nl_lock"]  # type: ignore[return-value]
 
     # ── 概览 ──
     def summary(self) -> dict:

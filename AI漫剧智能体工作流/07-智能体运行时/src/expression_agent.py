@@ -136,8 +136,10 @@ def build_card(parsed, asset_id: str, now: str) -> AssetCard:
         source=parsed.raw, created_at=now, updated_at=now,
         world=parsed.world,
         parent_asset=owner,
-        locked=list(MUTABLE_PARTS),        # 只有这几项**允许**改
-        editable=list(MUTABLE_PARTS),
+        # ⚠️ 原写法 `locked=MUTABLE_PARTS`（`editable` 同值）—— **语义反转**：
+        #    MUTABLE_PARTS 是「只有这几项**允许**改」，却被写进了 `locked`，
+        #    于是"可变的"被标成"锁定的"，且 `locked == editable`（不可能同时成立）。
+        #    现由 `agent._create` 按 §四·补 A/B 统一设置。
     )
 
 

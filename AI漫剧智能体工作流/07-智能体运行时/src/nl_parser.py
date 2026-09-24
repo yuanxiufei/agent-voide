@@ -75,8 +75,15 @@ JOBS = ["佣兵", "雇佣兵", "杀手", "刺客", "医生", "护士", "侦探",
 MODIFY_VERBS = ["改成", "换成", "改为", "变成", "增加", "加上", "去掉", "删除", "减掉"]
 
 FIELD_MAP = {
-    "头发": "hair", "发色": "hair_color", "发型": "hair_style", "眼睛": "eyes",
-    "瞳色": "eye_color", "服装": "clothing", "衣服": "clothing",
+    "头发": "hair", "发色": "hair_color", "发型": "hair_style",
+    # ⚠️ 「眼睛 / 眼瞳 / 瞳孔 / 瞳色」**全部**要映到 `eye_color`：
+    #    ① 原表把「眼睛」映到 `eyes`，而 `_apply_changes` 只处理 `eye_color`
+    #       → 「把她的眼睛换成蓝色」是**静默无效**（报了"未识别出可改字段"但不改）；
+    #    ② 「瞳孔」压根不在表里 → 「把她的**瞳孔**换成蓝色」连字段都解析不出，
+    #       于是 §四·补 A「瞳色 100% 不可改动」这条**最该报的约束反而沉默**（实测踩到）。
+    "眼睛": "eye_color", "眼瞳": "eye_color",
+    "瞳孔": "eye_color", "瞳色": "eye_color",
+    "眼型": "eye_shape", "服装": "clothing", "衣服": "clothing",
     "装备": "equipment", "武器": "equipment", "颜色": "color",
     "机械臂": "cybernetic_arm", "机械腿": "cybernetic_leg", "义眼": "cybernetic_eye",
     "年龄": "age", "体型": "body", "身材": "body",

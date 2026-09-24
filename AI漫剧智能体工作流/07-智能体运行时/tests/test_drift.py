@@ -204,6 +204,22 @@ def _run(tmp: Path) -> int:
           rep.missing == ["n.md"] and rep.ok, f"{rep.missing} ok={rep.ok}")
 
     print()
+    print("── §六「锁定清单」：交付物里的 LOCK_* 必须属于 §一 ──")
+    valid = {"LOCK_FACE", "LOCK_HAIR", "LOCK_COLOR"}
+    check("合法的 LOCK_* → 不报",
+          not drift.check_locks("锁定项 LOCK_FACE LOCK_HAIR", valid))
+    check("`LOCK_CUT`（不在 §一）→ 报出",
+          drift.check_locks("locked: LOCK_CUT", valid) == ["LOCK_CUT"], )
+    # ⭐ 这条抓的正是本项目真实发生过的错：6 个 agent 曾硬编码
+    #    ["CUT","LAYER_ORDER"] / ["STRUCTURE"] 当锁定项 —— 它们都**不是 LOCK_* 名**。
+    check("`LOCK_STRUCTURE` / `LOCK_CUT`（历史上真实写过的错）→ 报出",
+          set(drift.check_locks("LOCK_STRUCTURE, LOCK_CUT", valid))
+          == {"LOCK_STRUCTURE", "LOCK_CUT"})
+    check("非 LOCK_ 的大写词（CHR_001 / FACE / HAIR）→ **不误报**",
+          not drift.check_locks("CHR_001 FACE HAIR BODY", valid))
+    check("没给清单时不做判定（不误报）", not drift.check_locks("LOCK_ANY", set()))
+
+    print()
     print("── ⚠️ 诚实说明：§六 另两项必须显式列为「未核验」 ──")
     txt = "\n".join(drift.UNCHECKED_NOTES)
     # 风格锚点**能核验**（按权威规则判定，不依赖那张表）；
