@@ -315,18 +315,29 @@ def cmd_drift(a: argparse.Namespace) -> int:
     ag = DramaAssetAgent(AgentConfig.load(ROOT))
     known, gap = drift.load_registry(ag.cfg.root)
 
+    # 权威风格锚点取自**工作流规则**（`TURNAROUND-STANDARD.md` §六）——
+    # 这是"风格锚点表"的事实载体（那张被 §六 指向的表并不存在）
+    try:
+        author = {"cinematic_quality": (ag.rules.cinematic_concrete or "").strip(),
+                  "quality_targets": (ag.rules.quality_params_en or "").strip()}
+        author = {k: v for k, v in author.items() if v}
+    except Exception:                                                # noqa: BLE001
+        author = {}
+
     if a.file:
         p = Path(a.file)
         if not p.is_file():
             print(f"❌ 文件不存在：{a.file}")
             return 2
         hr(f"🧭 漂移检测 · 交付物 {a.file}")
-        rep = drift.check_text(p.read_text(encoding="utf-8"), known,
-                               scope=str(a.file))
+        txt = p.read_text(encoding="utf-8")
+        rep = drift.check_text(txt, known, scope=str(a.file))
         rep.registry_gap = []
+        if author:
+            rep.anchor = drift.check_anchors([(str(a.file), txt)], author)
     else:
         hr("🧭 漂移检测 · 全库（§六 全局一致性守护）")
-        rep = drift.scan_output(ag.cfg.root, known)
+        rep = drift.scan_output(ag.cfg.root, known, authoritative=author)
         rep.registry_gap = gap
 
     rep.type_conflict = drift.check_conflicts(ag.cfg.root)

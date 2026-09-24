@@ -130,11 +130,13 @@ class DriftReport:
     orphans: list[str] = field(default_factory=list)       # ℹ️登记了但无人引用
     style_mismatch: list[tuple[str, str]] = field(default_factory=list)  # ⚠️字面风格
     foreign: list[tuple[str, str]] = field(default_factory=list)     # 外来前缀
+    anchor: "AnchorReport | None" = None                   # §六 风格锚点一致性
     unchecked: list[str] = field(default_factory=list)     # 本命令未核验的项
 
     @property
     def ok(self) -> bool:
-        return not (self.unregistered or self.malformed or self.type_conflict)
+        return not (self.unregistered or self.malformed or self.type_conflict
+                    or (self.anchor is not None and not self.anchor.ok))
 
     def render(self) -> str:
         L: list[str] = []
@@ -175,9 +177,14 @@ class DriftReport:
             L.append(f"  ℹ️ 库里登记但**未见任何交付物引用**：{len(self.orphans)} 个")
             L.append(f"      {'、'.join(self.orphans[:12])}"
                      + ("…" if len(self.orphans) > 12 else ""))
+        if self.anchor is not None:
+            L.append("")
+            L.append("  ── §六 风格锚点一致性（防全片画风漂移）──")
+            L.append(self.anchor.render())
         if not (self.unregistered or self.malformed or self.type_conflict
                 or self.registry_gap or self.foreign or self.orphans):
-            L.append("  ✅ 未发现漂移（引用的 ID 都在总表里，格式合规）")
+            L.append("")
+            L.append("  ✅ 未发现 ID 漂移（引用的 ID 都在总表里，格式合规）")
         if self.unchecked:
             L.append("")
             L.append("  ⚠️ **本命令未核验的项**（不要以为 drift 通过 = 一切都对）：")
@@ -344,11 +351,42 @@ def check_conflicts(root: Path) -> list[str]:
     return out
 
 
-def scan_output(root: Path, known: set[str]) -> DriftReport:
-    """扫全部交付物（`output/` 下的提示词包 / 索引表 / 元数据）做漂移检测。"""
+def anchor_items(root: Path) -> list[tuple[str, str]]:
+    """收集所有带风格锚点的交付物：资产卡（源头）+ `output/` 下的提示词包。"""
+    root = Path(root)
+    out: list[tuple[str, str]] = []
+    ad = root / "assets"
+    for sub in sorted(ad.iterdir()) if ad.is_dir() else []:
+        if not sub.is_dir():
+            continue
+        for card in sorted(sub.glob("*/latest.json")):
+            try:
+                out.append((f"assets/{sub.name}/{card.parent.name}/latest.json",
+                            card.read_text(encoding="utf-8")))
+            except Exception:                                        # noqa: BLE001
+                continue
+    od = root / "output"
+    for f in sorted(od.rglob("*")) if od.is_dir() else []:
+        if f.is_file() and f.suffix in (".md", ".json", ".txt"):
+            try:
+                out.append((str(f.relative_to(root)),
+                            f.read_text(encoding="utf-8", errors="replace")))
+            except Exception:                                        # noqa: BLE001
+                continue
+    return out
+
+
+def scan_output(root: Path, known: set[str],
+                authoritative: dict[str, str] | None = None) -> DriftReport:
+    """扫全部交付物（`output/` 下的提示词包 / 索引表 / 元数据）做漂移检测。
+
+    :param authoritative: 权威风格锚点（来自工作流规则）。给了才做锚点一致性核验。
+    """
     root = Path(root)
     rep = DriftReport(scope="全库交付物（output/ 下的提示词 / 索引表 / 元数据）",
                       known=len(known))
+    if authoritative:
+        rep.anchor = check_anchors(anchor_items(root), authoritative)
     referenced: set[str] = set()
     files = sorted((root / "output").rglob("*")) if (root / "output").is_dir() else []
     seen_tokens: list[str] = []
@@ -377,15 +415,141 @@ def scan_output(root: Path, known: set[str]) -> DriftReport:
 
 
 # ─────────────────────────────────────────────────────────────
-# §六 另外两项的诚实交代（不能假装比对过）
+# §六 的另一项：**风格锚点一致性**（防全片画风漂移）
+# ─────────────────────────────────────────────────────────────
+#
+# §六 原文要求比对「风格锚点表」，并把它列为防画风漂移的手段。
+# 而那张表的模板被指到 `TURNAROUND-STANDARD.md` §七 —— **指错了**（§七 是光影设计）。
+# 风格锚点的**权威定义**其实在 `02-服化道/模板/VISUAL_BIBLE.md` §4.8
+# （「风格 DNA / 风格锚点」+「**全片所有 prompt 末尾强制追加，一字不改**」）。
+#
+# ⭐ 更关键的是：本项目**每条提示词里都真的带着这段锚点**，且它来自权威规则。
+# 于是"锚点有没有漂移"是**可确定性判定的** —— 不需要先有那张表：
+#   ① 每个交付物里的锚点，应与**权威规则里的锚点逐字相同**
+#   ② 各交付物之间也应逐字相同
+# 这就是 §六 想防的东西（"防全片画风漂移"），而且能在**交付当场**报出来。
+
+# 锚点两段（由 `prompt_engine._tail_block()` 写入，值来自工作流 §六）
+#
+# ⚠️ 取值的**终止符必须同时包含「真换行」与「转义换行 `\n`」** ——
+# 实测踩到：资产卡是 JSON，里面的换行是**两个字符** `\` + `n`，
+# 于是 `[^\n]+` 不认它、一路吞到整行末尾，抓到的值与权威值**肉眼看着一样**
+# 却判定不等（8 处全误报）。凡"在 JSON 里用正则取一行"都要防这个。
+#   ⚠️ 终止符要**三样都认**：真换行 `\n` · 转义换行 `\`+`n` · **引号**（JSON 串的结束引号）。
+#      实测第二次踩到：JSON 里 `"prompt_en": "…quality.",` 的那个 `"` 是**字符串结束引号**
+#      （不是 `\"`），只认 `\"` 就会把它和逗号一起吃进来。
+_ANCHOR_STOP = r"(?:\\n|\n|\"|$)"
+ANCHOR_PATTERNS: dict[str, str] = {
+    "cinematic_quality": r"CINEMATIC QUALITY[^\n:]*:\s*(.+?)" + _ANCHOR_STOP,
+    "quality_targets": r"Quality targets:\s*(.+?)" + _ANCHOR_STOP,
+}
+ANCHOR_LABEL = {"cinematic_quality": "光影/电影感锚点",
+                "quality_targets": "画质参数锚点"}
+
+
+def extract_anchor(text: str) -> dict[str, str]:
+    """从一段提示词里抽出**风格锚点**（两段）。抽不到返回空 dict。"""
+    out: dict[str, str] = {}
+    for k, pat in ANCHOR_PATTERNS.items():
+        m = re.search(pat, text or "")
+        if m:
+            # 去掉 markdown 反引号/句末句点等包裹，便于逐字比对
+            out[k] = m.group(1).strip().strip("`").rstrip(".").strip()
+    return out
+
+
+@dataclass
+class AnchorReport:
+    """风格锚点一致性（§六「防全片画风漂移」）。"""
+
+    authoritative: dict[str, str] = field(default_factory=dict)
+    missing: list[str] = field(default_factory=list)             # 交付物没带锚点
+    deviated: list[tuple[str, str, str, str]] = field(default_factory=list)
+    #  ↑ (来源, 锚点名, 实际值, 权威值)
+    inconsistent: list[tuple[str, str]] = field(default_factory=list)
+    #  ↑ 各交付物之间不一致 (锚点名, 说明)
+    checked: int = 0
+
+    @property
+    def ok(self) -> bool:
+        return not (self.deviated or self.inconsistent)
+
+    def render(self) -> str:
+        L: list[str] = []
+        L.append(f"  风格锚点：已核验 {self.checked} 个交付物")
+        for k, v in self.authoritative.items():
+            L.append(f"      权威 {ANCHOR_LABEL.get(k, k)}：{v[:96]}")
+        if self.deviated:
+            L.append(f"  ❌ **风格锚点与权威规则不一致（画风漂移）："
+                     f"{len(self.deviated)} 处**")
+            for src, k, got, want in self.deviated[:8]:
+                L.append(f"      {src} · {ANCHOR_LABEL.get(k, k)}")
+                L.append(f"          实际：{got[:90]}")
+                L.append(f"          权威：{want[:90]}")
+            L.append("      依据：§六「防全片画风漂移」+ `VISUAL_BIBLE.md` §4.8"
+                     "「全片所有 prompt 末尾强制追加，**一字不改**」")
+        if self.inconsistent:
+            L.append(f"  ❌ **交付物之间锚点互相不一致：{len(self.inconsistent)} 处**")
+            for k, why in self.inconsistent[:6]:
+                L.append(f"      {ANCHOR_LABEL.get(k, k)}：{why}")
+        if self.missing:
+            L.append(f"  ⚠️ 未带风格锚点的交付物：{len(self.missing)} 个")
+            for m in self.missing[:8]:
+                L.append(f"      {m}")
+        if self.checked and not (self.deviated or self.inconsistent or self.missing):
+            L.append("  ✅ 全部交付物的风格锚点与权威规则**逐字一致**（无画风漂移）")
+        elif not self.checked:
+            L.append("  · 尚无带锚点的交付物可核验")
+        return "\n".join(L)
+
+
+def check_anchors(items: list[tuple[str, str]],
+                  authoritative: dict[str, str],
+                  ) -> AnchorReport:
+    """核验风格锚点一致性。
+
+    :param items: `[(来源名, 文本), …]`
+    :param authoritative: 权威锚点（来自工作流规则，见 `rule_source`）
+    """
+    rep = AnchorReport(authoritative=dict(authoritative))
+    per_key: dict[str, dict[str, list[str]]] = {}
+    for src, txt in items:
+        a = extract_anchor(txt)
+        if not a:
+            rep.missing.append(src)
+            continue
+        rep.checked += 1
+        for k, got in a.items():
+            want = (authoritative or {}).get(k, "")
+            if want and got != want:
+                rep.deviated.append((src, k, got, want))
+            per_key.setdefault(k, {}).setdefault(got, []).append(src)
+    # 各交付物之间
+    for k, mp in per_key.items():
+        if len(mp) > 1:
+            vals = sorted(mp, key=lambda v: -len(mp[v]))
+            rep.inconsistent.append(
+                (k, f"出现 {len(mp)} 种写法；多数写法用在 {len(mp[vals[0]])} 个交付物，"
+                    f"另有 {len(mp[vals[1]])} 个不同"))
+    return rep
+
+
+# ─────────────────────────────────────────────────────────────
+# 仍需诚实交代的项（不能假装比对过）
 # ─────────────────────────────────────────────────────────────
 
 UNCHECKED_NOTES = [
-    "**风格锚点一致性**：§六 说比对「风格锚点表」，而该表模板指向 "
-    "`02-服化道/引擎/TURNAROUND-STANDARD.md` §七 —— 但 §七 的实际内容是"
-    "「光影设计的三个来源与分工」，**不含风格锚点表**。"
-    "即 §六 的这条交叉引用**指错了**，本项目也从未产出过该表 → **无可比对之表，不判定**。"
-    "（这是一处真实的权威层缺陷，需先在工作流侧决定：新建该表，还是改指到别处）",
     "**ID 的语义正确性**：本命令只验「ID 在不在总表、格式对不对」，"
     "**不验**「这个 ID 用在这里对不对」（如某镜头是否真该出现该角色）—— 那需要读剧本语义。",
+    "**风格锚点的「风格本身对不对」**：只验**有没有漂移**（各交付物与权威规则是否逐字一致），"
+    "不验艺术判断（如 LUT 选得合不合适）—— 那要人看。",
+    "**交接清单里的 `风格锚点：` 字段**（各模块主控要求的那一栏）：那是**人手写的自由文本**"
+    "（工作流示例里出现过「与 02 一致，未改动」「见上，全片固定」「无」等同义不同字的写法），"
+    "**无法确定性比对** → 不判定。可机验的是**机器生成的锚点段**"
+    "（提示词 / 资产卡 / 元数据里的 `CINEMATIC QUALITY` 与 `Quality targets`），本命令已覆盖。",
+    "⚠️ **工作流侧仍有一处错引用待修**：§六 说风格锚点表的模板在 "
+    "`02-服化道/引擎/TURNAROUND-STANDARD.md` §七，但 §七 实际是「光影设计的三个来源与分工」。"
+    "风格锚点的权威定义在 `02-服化道/模板/VISUAL_BIBLE.md` §4.8。"
+    "本节按**权威规则里的锚点**判定（不依赖那张不存在的表），已能查漂移；"
+    "但工作流文档里的错引用本身仍需订正。",
 ]

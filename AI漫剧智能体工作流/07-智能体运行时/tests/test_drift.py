@@ -156,10 +156,62 @@ def _run(tmp: Path) -> int:
           str(rep3.orphans))
 
     print()
+    print("── §六 风格锚点一致性（防全片画风漂移）──")
+    auth = {"cinematic_quality": "controlled key light, soft fill",
+            "quality_targets": "photorealistic / lifelike priority; ultra-high detail"}
+    # ① 正常：纯文本形态（.md）
+    md_ok = ("...\nCINEMATIC QUALITY (concrete, not just the word 'cinematic'): "
+             "controlled key light, soft fill\n"
+             "STYLE: x. Quality targets: photorealistic / lifelike priority; "
+             "ultra-high detail.\n")
+    rep = drift.check_anchors([("a.md", md_ok), ("b.md", md_ok)], auth)
+    check("两条纯文本交付物锚点一致 → ok", rep.ok and rep.checked == 2,
+          f"checked={rep.checked} dev={rep.deviated} inc={rep.inconsistent}")
+
+    # ② ⭐ 回归用例：**JSON 形态**（换行是转义的 `\`+`n`，串尾是 `"`）
+    #    这个形态我**连续踩了两次**：`[^\n]+` 不认转义换行 → 一路吞到行尾；
+    #    只认 `\"` 又会把 JSON 的**结束引号**和逗号一起吃进来。
+    #    故固化成用例，防再犯。
+    json_ok = ('{"prompt_en": "...\\nCINEMATIC QUALITY (concrete, not just the word '
+               "'cinematic'): controlled key light, soft fill\\nSTYLE: x. "
+               'Quality targets: photorealistic / lifelike priority; ultra-high detail.\\n"}')
+    a = drift.extract_anchor(json_ok)
+    check("JSON 转义换行形态：光影锚点抓对（不多吃）",
+          a.get("cinematic_quality") == auth["cinematic_quality"],
+          repr(a.get("cinematic_quality")))
+    check("JSON 转义换行形态：画质锚点抓对（不吞结束引号与逗号）",
+          a.get("quality_targets") == auth["quality_targets"],
+          repr(a.get("quality_targets")))
+    check("JSON 形态与文本形态 → 判定一致（不误报）",
+          drift.check_anchors([("a.json", json_ok), ("b.md", md_ok)], auth).ok)
+
+    # ③ 必须报出：锚点被改动
+    tampered = md_ok.replace("controlled key light, soft fill",
+                             "controlled key light, **warm** fill")
+    rep = drift.check_anchors([("a.md", md_ok), ("bad.md", tampered)], auth)
+    check("锚点被改 → ❌ 报出（这就是画风漂移）",
+          not rep.ok and any(s == "bad.md" for s, _, _, _ in rep.deviated),
+          str(rep.deviated))
+
+    # ④ 必须报出：交付物之间不一致（与权威也都不一致时以前者为准，这里用不设权威的情形）
+    rep = drift.check_anchors([("a.md", md_ok), ("b.md", tampered)], {})
+    check("交付物之间锚点不同 → ❌ 报出",
+          not rep.ok and rep.inconsistent, str(rep.inconsistent))
+
+    # ⑤ 未带锚点 → 列入 missing（⚠️不算 ❌，与"缺失 vs 漂移"区分开）
+    rep = drift.check_anchors([("a.md", md_ok), ("n.md", "没有锚点的一段话")], auth)
+    check("没带锚点的交付物 → 进 missing（不误报为漂移）",
+          rep.missing == ["n.md"] and rep.ok, f"{rep.missing} ok={rep.ok}")
+
+    print()
     print("── ⚠️ 诚实说明：§六 另两项必须显式列为「未核验」 ──")
     txt = "\n".join(drift.UNCHECKED_NOTES)
-    check("明确列出「风格锚点表不存在、指错了」", "指错了" in txt and "§七" in txt)
+    # 风格锚点**现在能核验了**（按权威规则判定，不依赖那张不存在的表），
+    # 但工作流侧那条错引用仍需订正 —— 必须写明，不能因为"能跑"就不提。
+    check("明确列出「§六 的错引用仍待订正」并给出正确位置",
+          "错引用" in txt and "VISUAL_BIBLE.md` §4.8" in txt, txt[:120])
     check("明确列出「不验 ID 的语义正确性」", "语义正确性" in txt)
+    check("明确列出「不验风格本身好不好（艺术判断）」", "艺术判断" in txt)
 
     print()
     print("=" * 66)
