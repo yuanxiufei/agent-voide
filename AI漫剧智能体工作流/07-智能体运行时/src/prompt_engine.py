@@ -64,6 +64,23 @@ ZH2EN: dict[str, str] = {
     "红": "red", "暗红": "dark red", "酒红": "wine red", "橙": "orange",
     "黄": "yellow", "绿": "green", "青": "cyan", "蓝": "blue", "紫": "purple",
     "粉": "pink", "棕": "brown", "米": "beige", "藏青": "navy",
+    # ── 材质补充（2026-09-24，为"任何一部小说都行"）──
+    # ⚠️ 材质是**有限集合**，故扩充是正当的（不像"形制/器物"是无限词，只能靠语法抽）。
+    #    此前缺「丝/丝绸/缎」等 —— 而它们在民国/仙侠/古代题材里极常见：
+    #    「丝质旗袍」会因 `tr('丝')='丝'` 把中文送进英文 prompt（第 7 次同款问题的变体）。
+    "丝绸": "silk", "丝": "silk", "缎": "satin", "绢": "silk fabric",
+    "纱": "gauze", "绡": "chiffon", "呢": "wool", "绒": "velvet",
+    "麻": "linen", "棉麻": "cotton-linen", "帆布": "canvas", "锦": "brocade",
+    "皮": "leather", "革": "leather", "金属": "metal", "铁": "iron",
+    "钢": "steel", "银": "silver", "塑料": "plastic", "纸质": "paper",
+    # ── 场所后缀补充（`prep_place` 用）──
+    "洋行": "foreign firm", "当铺": "pawnshop", "客栈": "inn",
+    "衙门": "yamen", "书院": "academy", "驿站": "post station",
+    "铺": "shop", "栈": "warehouse", "驿": "post station", "寨": "stockade",
+    "堡": "fort", "寺": "temple", "庙": "temple", "阁": "pavilion",
+    "苑": "garden", "园": "garden", "斋": "studio", "堂": "hall",
+    "舫": "boat", "舟": "boat", "船": "boat", "关": "pass",
+    "仓": "granary", "塔": "tower", "岛": "island", "湾": "bay",
 }
 
 WORLD_RENDER = {k: f"photorealistic {v} cinematic concept art" for k, v in {
@@ -325,13 +342,16 @@ def _identity_line(card: AssetCard) -> str:
         bits.append(f"{card.age}-year-old")
     if card.gender:
         bits.append(card.gender)
+    # ⚠️ 四处都过 `_en_safe()`：`tr()` 兜底可能原样返回中文（见其 docstring）
     if card.world:
-        bits.append(tr(card.world))
+        bits.append(_en_safe(card.world))
     if card.occupation:
-        bits.append(OCCUPATION_EN.get(card.occupation, tr(card.occupation)))
+        bits.append(OCCUPATION_EN.get(card.occupation) or _en_safe(card.occupation))
     if card.camp:
-        bits.append(f"({tr(card.camp)})")
-    return " ".join(bits) or card.name or "character"
+        camp = _en_safe(card.camp)
+        if camp:
+            bits.append(f"({camp})")
+    return " ".join(bits) or _en_name(card) or "character"
 
 
 def _pl(pairs) -> str:
@@ -339,17 +359,35 @@ def _pl(pairs) -> str:
     return _join(pick_list([p[0] for p in pairs], [p[1] for p in pairs]))
 
 
-def _is_extra_name(card: AssetCard) -> bool:
-    """名字是否包含「身份行没覆盖的额外信息」。
+def _en_safe(s: str) -> str:
+    """`tr()` 的兜底**可能原样返回中文** —— 进英文 prompt 前必须过这道闸。
 
-    自动生成的名字形如 `佣兵-wasteland`（职业-世界观），内容已被身份行覆盖 →
-    不再拼到英文 prompt 里（避免留一串中文）。用户给的真名（如「艾米丽」）则保留。
+    ⚠️ 实测踩到（第 7 次同款）：词表外职业「机械师」经
+    `OCCUPATION_EN.get(...) or tr(...)` 落到 `tr()` 兜底 → 原样输出中文
+    → 英文 prompt 变成 `PROP: prop (机械师)`。
+
+    本闸的作用是把"**兜底失败**"从"静默夹中文"变成"**省略该词**"（不写胜过写无效内容）。
+    词表里没有的词，应走 `OCCUPATION_EN` 补词，或由 LLM 翻译。
     """
-    name = (card.name or "").strip()
-    if not name:
-        return False
-    auto = f"{card.occupation or '角色'}-{card.world or '未定'}"
-    return name != auto
+    t = tr(s or "")
+    return "" if re.search(r"[\u4e00-\u9fa5]", t) else t
+
+
+def _en_name(card: AssetCard) -> str:
+    """名字**只有在能用于英文 prompt 时才返回**，否则空串。
+
+    ⚠️ 中文名进英文 prompt **毫无用处** —— 图像模型读不懂，等于没写，
+    还污染了 prompt。本项目已**第 7 次**踩同类问题；而此前我把
+    「`PROP: 未来主义能源步枪`」判为"用户给的名字，可接受"是**错的**：
+    那是"看起来有标识、实际模型读不到"。
+
+    ⚠️ 本函数**取代**了旧的 `_is_extra_name()`（后者只挡"自动生成的名字"，
+    机制更窄：它按 `职业-世界观` 的字面比对，覆盖不到 `服装`/`道具` 这类名字，
+    也挡不住用户给的中文真名如「艾米丽」）。
+    现在判据更本质：**名字里有没有中文**。
+    """
+    n = (card.name or "").strip()
+    return "" if re.search(r"[\u4e00-\u9fa5]", n) else n
 
 
 def _scene_tail_block(rules, sd) -> str:
@@ -389,8 +427,8 @@ def build_prompt_en(card: AssetCard, rules) -> str:
              if pano else
              "Create a professional cinematic ENVIRONMENT concept design for an "
              "AI-animation / game production art library."),
-            f"SCENE: {pick(sd.name_en, card.name) or 'environment'}"
-            + (f" ({tr(card.world)})" if card.world else ""),
+            f"SCENE: {pick(sd.name_en, _en_name(card)) or 'environment'}"
+            + (f" ({_en_safe(card.world)})" if _en_safe(card.world) else ""),
             "ARCHITECTURE: " + _join([pick(sd.building_en, sd.building),
                                       pick(sd.architectural_style_en, sd.architectural_style)]),
             "SPACE & SCALE: " + _join([pick(sd.spatial_scale_en, sd.spatial_scale),
@@ -421,8 +459,8 @@ def build_prompt_en(card: AssetCard, rules) -> str:
         parts = [
             "Create a professional 16:9 landscape COSTUME design sheet for a cinematic "
             "AI-animation / game production asset library.",
-            f"GARMENT: {card.name or 'garment'}"
-            + (f" ({tr(card.world)})" if card.world else ""),
+            f"GARMENT: {_en_name(card) or 'garment'}"
+            + (f" ({_en_safe(card.world)})" if _en_safe(card.world) else ""),
             "LAYERS: " + pick(vd.layers_en, vd.layers),
             "SILHOUETTE: " + pick(vd.silhouette_en, vd.silhouette),
             "MATERIALS: " + _pl([(vd.material_en, vd.material),
@@ -444,7 +482,7 @@ def build_prompt_en(card: AssetCard, rules) -> str:
                 "character asset library.")
         parts = [
             head,
-            f"SUBJECT: {sh.owner or card.name or 'character'}",
+            f"SUBJECT: {sh.owner or _en_name(card) or 'character'}",
             # ⚠️ 只给**英文** ITEMS —— 曾同时输出 CN `ITEMS:` 与 `ITEMS (EN):`，
             #    前者把整张中文表塞进了英文 prompt（实测：动作集 175 字）。
             "ITEMS: " + (" · ".join(sh.items_en or sh.items)),
@@ -472,9 +510,10 @@ def build_prompt_en(card: AssetCard, rules) -> str:
         parts = [
             "Create a professional 16:9 landscape prop design sheet for a cinematic "
             "AI-animation / game production asset library.",
-            f"PROP: {card.name or 'prop'}"
-            + (f" ({OCCUPATION_EN.get(card.occupation, tr(card.occupation))})"
-               if card.occupation else ""),
+            f"PROP: {_en_name(card) or 'prop'}"
+            + (f" ({OCCUPATION_EN.get(card.occupation) or _en_safe(card.occupation)})"
+               if (OCCUPATION_EN.get(card.occupation)
+                   or _en_safe(card.occupation)) else ""),
             "STRUCTURE: " + _pl([(vd.structure_en, vd.structure),
                                  (vd.craft_en, vd.craft)]),
             "MATERIALS: " + _pl([(vd.material_en, vd.material),
@@ -492,7 +531,7 @@ def build_prompt_en(card: AssetCard, rules) -> str:
         # ⚠️ 名字后缀只在「非纯推导」时才加 —— 自动生成的名字形如 `佣兵-wasteland`，
         #    内容已被身份行完全覆盖；再拼上去只会在英文 prompt 里留一串中文。
         f"CHARACTER: {_identity_line(card)}"
-        + (f" — {card.name}" if _is_extra_name(card) else ""),
+        + (f" — {_en_name(card)}" if _en_name(card) else ""),
         # ⚠️ 不重复 ff.facial_contour —— 它是由 face_shape + jaw 推导出的摘要，
         #    一起写会让 prompt 出现 "strong jaw, hollow cheeks" 两遍。
         "FACE: " + _pl([(vd.face_shape_en, vd.face_shape), (vd.jaw_en, vd.jaw),
@@ -612,6 +651,20 @@ def build_prompt_cn(card: AssetCard) -> str:
         "品质：8K 超清、拟真影视级概念设计稿质感",
     ]
     return "\n".join(x for x in lines if x and not x.endswith("："))
+
+
+def name_suppressed_note(card: AssetCard) -> list[str]:
+    """名字含中文 → 英文 prompt 里省略了它，**必须说出来**。
+
+    否则用户看到英文 prompt 里没有名字，会以为"资产名丢了/坏了"，
+    而真相是"中文名对英文模型无效，故未写入"。
+    """
+    n = (card.name or "").strip()
+    if n and not _en_name(card):
+        return [f"ℹ️ 资产名「{n}」含中文 → **英文 prompt 里已省略**"
+                f"（图像模型读不懂中文名，写了等于没写；中文 prompt 仍保留该名）。"
+                f"如需英文标识：在资产卡补英文名，或配 `MODEL_API_KEY` 让 LLM 翻译"]
+    return []
 
 
 def build_prompts(card: AssetCard, rules, *, failures: list[str] | None = None

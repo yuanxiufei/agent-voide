@@ -91,20 +91,52 @@ def _pick_preset(text: str, name: str) -> dict:
     return DEFAULT_PROP
 
 
+_KEY2FLD = {"structure": "structure", "material": "material", "craft": "craft",
+            "surface": "surface_texture", "wear": "wear",
+            "scale": "scale_reference", "primary_color": "primary_color"}
+
+
+def _write(vd, src: dict, keys) -> None:
+    """把 `src` 的值写入 vd（**只填空白**，故调用顺序即优先级）。"""
+    for k in keys:
+        fld = _KEY2FLD.get(k, k)
+        _set_if_empty(vd, fld, src.get(k, "") or "")
+        en = src.get(k + "_en", "")
+        if en:
+            setattr(vd, fld + "_en", getattr(vd, fld + "_en", "") or en)
+
+
 def complete(card: AssetCard, parsed, rules, llm=None) -> tuple[AssetCard, list[str]]:
     notes: list[str] = []
     vd: VisualDNA = card.visual_dna
-    preset = _pick_preset(parsed.raw, card.name)
 
-    # 中文进 prompt_cn，英文进 prompt_en（字段成对写入）
-    for fld, key in (("structure", "structure"),
-                     ("material", "material"), ("craft", "craft"),
-                     ("surface_texture", "surface"),
-                     ("wear", "wear"), ("scale_reference", "scale")):
-        _set_if_empty(vd, fld, preset[key])
-        en = preset.get(key + "_en", "")
-        if en:
-            setattr(vd, fld + "_en", getattr(vd, fld + "_en", "") or en)
+    # ⭐ ① **先把用户原话写进去**（顺序即优先级）——
+    #    ⚠️ 此前只用 `parsed.raw` 查预设，从不使用用户给的器物词：
+    #    「携带**密码本**」会被补成预设里的「铝合金 + 精密加工」（实测踩到）。
+    #    通用补全层按**语法**抽（「携带/手握/提着 + X」），**不依赖题材词表**。
+    from . import generic
+    from .nl_parser import COLORS, MATERIALS
+    hit, fb, gnotes = generic.prop_from_text(parsed.raw, MATERIALS, COLORS)
+    _write(vd, hit, ("structure", "material", "primary_color"))
+
+    # ⭐ ② 再跑题材预设（只补仍空白的）—— **但只在真的命中了品类预设时**。
+    #    ⚠️ 未命中会返回 `DEFAULT_PROP`（铝合金 / 精密加工），那是"看起来具体、
+    #    其实与题材无关"的值 —— 会让「密码本」配上「铝合金」（实测踩到）。
+    preset = _pick_preset(parsed.raw, card.name)
+    if preset is DEFAULT_PROP:
+        notes.append("ℹ️ **未命中道具品类预设** → 本次依「**你的原话 + 与题材无关的"
+                     "通用骨架**」补全，不套用某一品类的默认值。想更具体可在描述里"
+                     "多给几个词（如「携带黄铜怀表，表面有磨损」）")
+    else:
+        # 中文进 prompt_cn，英文进 prompt_en（字段成对写入）
+        for fld, key in (("structure", "structure"),
+                         ("material", "material"), ("craft", "craft"),
+                         ("surface_texture", "surface"),
+                         ("wear", "wear"), ("scale_reference", "scale")):
+            _set_if_empty(vd, fld, preset[key])
+            en = preset.get(key + "_en", "")
+            if en:
+                setattr(vd, fld + "_en", getattr(vd, fld + "_en", "") or en)
     notes.append(f"道具结构：{vd.structure[:40]}…")
     notes.append(f"材质/工艺：{vd.material} · {vd.craft}")
     notes.append(f"尺度参照：{vd.scale_reference}")
@@ -114,6 +146,13 @@ def complete(card: AssetCard, parsed, rules, llm=None) -> tuple[AssetCard, list[
         vd.material = "、".join(parsed.material_hints)
         notes.append(f"⚠️ 采用用户指定材质：{vd.material}")
 
+    # ⭐ ③ 最后写**兜底值**（只填真空白）并如实标注
+    _write(vd, fb, ("structure", "material", "craft", "surface", "wear", "scale",
+                    "primary_color"))
+    notes.extend(gnotes)
+    if hit:
+        notes.insert(0, "✅ 已按**你的原话**填道具：" + "、".join(
+            f"{k}={v}" for k, v in hit.items() if not k.endswith("_en") and v))
     _set_if_empty(vd, "primary_color", "哑光黑 + 磨砂钢原色")
     # ⚠️ 必须显式给英文 —— 靠 `tr()` 逐词替换会产出 `哑光black + brushed steel原色`
     #    这种**中英混排**（实测踩到）。

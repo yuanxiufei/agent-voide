@@ -361,8 +361,20 @@ def complete(card: AssetCard, parsed, rules=None, llm=None) -> tuple[AssetCard, 
 def _fill(card: AssetCard, parsed) -> list[str]:
     """补全场景字段（§四·4.1 的 11 项 + §32 的锁定/可变项）。返回说明。"""
     notes: list[str] = []
-    preset = _pick_preset(parsed.raw)
     sd: SceneDNA = card.scene_dna
+
+    # ⭐ ① **先把用户原话里的场所词与时代写进去**（顺序即优先级）。
+    #    ⚠️ 此前只用 `parsed.raw` 查预设，于是「在废弃医院的地下室」若没命中预设，
+    #    场所名与建筑描述都会被换成通用值（用户给的场所事实被丢掉）。
+    from . import generic
+    hit, fb, gnotes = generic.scene_from_text(parsed.raw)
+    for fld, val in hit.items():
+        name = "architectural_style" if fld == "style" else fld
+        if val and not getattr(sd, name, ""):
+            setattr(sd, name, val)
+
+    # ⭐ ② 再跑题材预设（只补仍空白的）
+    preset = _pick_preset(parsed.raw)
 
     for fld, val in preset["cn"].items():
         name = "architectural_style" if fld == "style" else fld
@@ -399,7 +411,17 @@ def _fill(card: AssetCard, parsed) -> list[str]:
     if parsed.color_hints and not sd.primary_color:
         sd.primary_color = parsed.color_hints[0]
 
-    notes.append(f"场景类型：{preset['name']}")
+    # ⭐ ③ 最后写**兜底值**（只填真空白）并如实标注
+    for fld, val in fb.items():
+        name = "architectural_style" if fld == "style" else fld
+        if val and not getattr(sd, name, ""):
+            setattr(sd, name, val)
+    notes.extend(gnotes)
+    if hit:
+        notes.insert(0, "✅ 已按**你的原话**填场景：" + "、".join(
+            f"{k}={v}" for k, v in hit.items() if not k.endswith("_en") and v))
+
+    notes.append(f"场景类型：{sd.name or preset['name']}")
     notes.append("必须生成要素 11 项已补齐（建筑/空间/材料/光线/氛围/时代/动线/前中后景/风格）")
     notes.append(f"多角度锁定 {len(sd.locked_elements)} 项 · 允许变化 {len(sd.variable_elements)} 项")
     if sd.primary_color:

@@ -35,7 +35,7 @@ from .consistency import (ConsistencyReport, check_modify_scope, check_required,
 from . import lock
 from .image_provider import get_provider, png_size
 from .llm_client import LLMClient
-from .prompt_engine import build_prompts
+from .prompt_engine import build_prompts, name_suppressed_note
 from .router import route
 from .rule_source import RuleSource
 from .schema import AssetCard, parse_id
@@ -545,6 +545,7 @@ class DramaAssetAgent:
         card.editable = card.editable or lock.default_editable(self.rules, card.type)
 
         en, cn, neg = build_prompts(card, self.rules)
+        notes.extend(name_suppressed_note(card))
         notes.extend(self._override_notes())
 
         rep = check_required(card, self.rules)

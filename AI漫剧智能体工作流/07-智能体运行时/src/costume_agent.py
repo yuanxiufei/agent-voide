@@ -87,20 +87,52 @@ def _pick(text: str) -> dict:
     return DEFAULT_COSTUME
 
 
+# `generic.clothing_from_text()` 的键 → VisualDNA 字段名
+_KEY2FLD = {"silhouette": "silhouette", "material": "material",
+            "primary": "primary_color", "accessory": "signature_accessory",
+            "wear": "wear"}
+
+
+def _write(vd, src: dict, keys) -> None:
+    """把 `src` 里的值写入 vd（**只填空白**，故调用顺序即优先级）。"""
+    for k in keys:
+        fld = _KEY2FLD.get(k, k)
+        _set_if_empty(vd, fld, src.get(k, "") or "")
+        _set_if_empty(vd, fld + "_en", src.get(k + "_en", "") or "")
+
+
 def complete(card: AssetCard, parsed, rules, llm=None) -> tuple[AssetCard, list[str]]:
     notes: list[str] = []
     vd: VisualDNA = card.visual_dna
     sv: StageVariables = card.stage_variables
-    preset = _pick(parsed.raw)
 
-    # 中文进 prompt_cn，英文伴生进 prompt_en（**成对写入**，缺英文会夹中文）
-    for fld, key in (("silhouette", "silhouette"), ("layers", "layers"),
-                     ("material", "material"), ("primary_color", "primary"),
-                     ("signature_accessory", "accessory"),
-                     ("surface_texture", "wear"), ("structure", "layers"),
-                     ("wear", "wear")):
-        _set_if_empty(vd, fld, preset[key])
-        _set_if_empty(vd, fld + "_en", preset.get(key + "_en", ""))
+    # ⭐ ① **先把用户原话写进去** —— 顺序即优先级：`_set_if_empty` 只填空，先写的赢。
+    #    ⚠️ 此前这里只用 `parsed.raw` 去**查预设**，从不使用用户给的服装词，
+    #    于是「穿**旗袍**的女特工」被补成预设里的「棉质三层功能服装」（实测踩到）。
+    #    通用补全层按**语法**抽词（「穿/着/戴 + X」），**不依赖题材词表** → 任何小说都适用。
+    from . import generic
+    from .nl_parser import COLORS, MATERIALS
+    hit, fb, gnotes = generic.clothing_from_text(parsed.raw, MATERIALS, COLORS)
+    _write(vd, hit, ("silhouette", "material", "primary", "accessory"))
+
+    # ⭐ ② 再跑题材预设（只补仍空白的）—— **但只在真的命中了题材预设时**。
+    #    ⚠️ 未命中会返回 `DEFAULT_COSTUME`（棉 / 深灰黑 + 暗红），那些是
+    #    **"看起来具体、其实与题材无关"** 的值：让它们赢，就会把「旗袍」配上「棉」
+    #    （实测踩到）。未命中时改走 ③ 的**中性兜底**，并明说没命中。
+    preset = _pick(parsed.raw)
+    if preset is DEFAULT_COSTUME:
+        notes.append("ℹ️ **未命中题材预设** → 本次依「**你的原话 + 与题材无关的通用骨架**」"
+                     "补全，不套用某一题材的默认值。想更具体可在描述里多给几个词"
+                     "（如「穿旗袍，深蓝真丝」）")
+    else:
+        # 中文进 prompt_cn，英文伴生进 prompt_en（**成对写入**，缺英文会夹中文）
+        for fld, key in (("silhouette", "silhouette"), ("layers", "layers"),
+                         ("material", "material"), ("primary_color", "primary"),
+                         ("signature_accessory", "accessory"),
+                         ("surface_texture", "wear"), ("structure", "layers"),
+                         ("wear", "wear")):
+            _set_if_empty(vd, fld, preset[key])
+            _set_if_empty(vd, fld + "_en", preset.get(key + "_en", ""))
     _set_if_empty(vd, "craft", "常规缝制")
     _set_if_empty(vd, "craft_en", "conventional stitching")
     _set_if_empty(sv, "full_outfit", preset["layers"])
@@ -117,6 +149,13 @@ def complete(card: AssetCard, parsed, rules, llm=None) -> tuple[AssetCard, list[
     # ⚠️ 原写法 `["CUT","LAYER_ORDER"]` / `["COLOR","WASH"]` **不是 §一 的 `LOCK_*` 名**
     #    （§一 只有 LOCK_COSTUME 等 13 项）。现由 `agent._create` 统一按权威设置；
     #    服装类无 §四·补 A/B 对应清单 → 不臆造（返回空）。
+
+    # ⭐ ③ 最后写**兜底值**（只填真空白）并如实标注 —— 不让人以为"棉"是从描述里识别出来的
+    _write(vd, fb, ("silhouette", "material", "primary", "accessory", "wear"))
+    notes.extend(gnotes)
+    if hit:
+        notes.insert(0, "✅ 已按**你的原话**填服装：" + "、".join(
+            f"{k}={v}" for k, v in hit.items() if not k.endswith("_en") and v))
 
     need = rules.costume_fields
     notes.append(f"服装必填字段 {len(need)} 项：" + "、".join(need[:8]) + "…")
