@@ -71,11 +71,16 @@ class AssetManager:
         n = int(self.registry.get("next", {}).get(asset_type, 1))
         return make_id(asset_type, n, self.id_style)
 
-    def allocate_id(self, asset_type: str, note: str = "") -> str:
-        """分配并**占用**一个 ID。号位只增不复用。"""
+    def allocate_id(self, asset_type: str, note: str = "",
+                    owner: str = "", name: str = "") -> str:
+        """分配并**占用**一个 ID。号位只增不复用。
+
+        `owner` / `name` 供 `EXP_<角色>_<表情名>` / `POS_<3位>_<动作名>` 两类模板用
+        （见 `schema.make_id`）。
+        """
         nxt = self.registry.setdefault("next", {})
         n = int(nxt.get(asset_type, 1))
-        aid = make_id(asset_type, n, self.id_style)
+        aid = make_id(asset_type, n, self.id_style, owner=owner, name=name)
         nxt[asset_type] = n + 1
         self.registry.setdefault("issued", {})[aid] = {
             "type": asset_type, "n": n, "note": note, "at": now_str()}

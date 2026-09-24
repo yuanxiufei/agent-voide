@@ -27,7 +27,8 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import character_agent, costume_agent, prop_agent, prompt_engine
+from . import (character_agent, costume_agent, expression_agent, pose_agent,
+               prop_agent, prompt_engine, scene_agent)
 from .asset_manager import AssetManager, now_str
 from .consistency import (ConsistencyReport, check_modify_scope, check_required,
                           check_text_risk, full_check, text_risk_checklist)
@@ -38,11 +39,37 @@ from .router import route
 from .rule_source import RuleSource
 from .schema import AssetCard
 
+# ⭐ 六类资产各有一个 agent（与 `schema.ASSET_TYPE_CN` 的键一一对应）。
+#    新增一类资产 = 这里加一行 + `registry.py` 的 asset agent 输出里加一项。
+#    ⚠️ 曾漏 environment/expression/pose → 那三类会**静默回退成角色 agent**
+#       （补出一套角色字段，用户拿到的是错的资产卡）。
 AGENTS = {
     "character": character_agent,
     "costume": costume_agent,
     "prop": prop_agent,
+    "environment": scene_agent,      # ENV_ 场景
+    "expression": expression_agent,  # EXP_ 表情集
+    "pose": pose_agent,              # POS_ 动作集
 }
+
+
+# 查询时「对象名词 → 资产类型」（比路由触发词更具体，见 `_query`）
+_OBJECT_TYPE: list[tuple[tuple[str, ...], str]] = [
+    (("武器", "刀", "枪", "剑", "装置", "道具", "装备", "护甲"), "prop"),
+    (("服装", "衣服", "套装", "制服", "战衣", "风衣", "盔甲", "长袍"), "costume"),
+    (("场景", "环境", "建筑", "地图"), "environment"),
+    (("表情", "表情集", "神态"), "expression"),
+    (("动作", "姿势", "姿态", "动作集"), "pose"),
+    (("角色", "人物", "主角", "配角", "NPC"), "character"),
+]
+
+
+def _type_from_object(text: str) -> str:
+    """从输入里的**对象名词**推断资产类型；推断不出返回空串。"""
+    for words, t in _OBJECT_TYPE:
+        if any(w in text for w in words):
+            return t
+    return ""
 
 
 def _set_pair(vd, fld: str, cn_value: str) -> None:
@@ -119,9 +146,16 @@ class DramaAssetAgent:
     # ── 创建 ──
 
     def _create(self, r, parsed, generate) -> dict:
-        aid = self.am.allocate_id(r.asset_type, note=parsed.raw[:40])
         now = now_str()
         agent = AGENTS.get(r.asset_type, character_agent)
+        # 表情/动作的 ID 模板含 `{owner}`/`{name}`（`EXP_<角色>_<表情名>` /
+        # `POS_<3位>_<动作名>`）—— 由 agent 提供片段，否则会生成 `POS_001_` 这种
+        # 带悬空分隔符的 ID。
+        owner, name_hint = ("", "")
+        if hasattr(agent, "id_hint"):
+            owner, name_hint = agent.id_hint(parsed)
+        aid = self.am.allocate_id(r.asset_type, note=parsed.raw[:40],
+                                  owner=owner, name=name_hint)
 
         if hasattr(agent, "build_card"):
             card = agent.build_card(parsed, aid, now)
@@ -273,13 +307,16 @@ class DramaAssetAgent:
 
     def _query(self, text: str, asset_type: str) -> dict:
         keyword = ""
-        for k in ("机械", "废土", "赛博", "银发", "长发"):
+        for k in ("机械", "废土", "赛博", "银发", "长发", "废墟", "霓虹", "指挥中心"):
             if k in text:
                 keyword = k
                 break
-        # 「列出所有武器」这类按类型查
-        if any(w in text for w in ("武器", "刀", "枪", "装置")):
-            asset_type = "prop"
+        # 「列出所有武器 / 所有场景 / 所有表情集」这类**按对象名查**。
+        # ⚠️ 原版只认武器词并**无条件覆盖**路由结果 → 「查看角色的武器」会变成只查道具。
+        #    现在按对象词推断，且**只在能推断出类型时才覆盖**。
+        hint = _type_from_object(text)
+        if hint:
+            asset_type = hint
         cards = self.am.list_assets(asset_type=asset_type, keyword=keyword)
         return {"operation": "query", "asset_type": asset_type, "keyword": keyword,
                 "count": len(cards),

@@ -323,13 +323,53 @@ class RuleSource:
 
     @property
     def costume_en_segment(self) -> str:
-        """§2.3 服装英文标准段。"""
-        return self._en_segment("turnaround", "cst_en", "服装标准（§07）")
+        """§2.3 服装**可拼接英文标准段**。
+
+        ⚠️ 修（2026-09-24）：原用标题「服装标准（§07）」定位 → `_code_block_after`
+        取到该标题下的**第一个**代码块，那是 **§2.1 必填描述字段（25 项）**，
+        于是 `LAYOUT:` 段里被塞进一串**中文字段名**（英文 prompt 里夹中文）。
+        现改用**精确小节标题** `2.3 可拼接英文标准段`。
+        """
+        return self._en_segment("turnaround", "cst_en", "2.3 可拼接英文标准段")
 
     @property
     def prop_en_segment(self) -> str:
-        """§3.3 道具英文标准段。"""
-        return self._en_segment("turnaround", "prp_en", "道具标准（§08）")
+        """§3.3 道具**可拼接英文标准段**（同 `costume_en_segment` 的修正理由）。"""
+        return self._en_segment("turnaround", "prp_en", "3.3 可拼接英文标准段")
+
+    @property
+    def scene_en_segment(self) -> str:
+        """§四·4.4 场景可拼接英文标准段（§09）。
+
+        ⚠️ 场景的英文段**与前三条结构不同** —— 它是 `Cinematic environment, [...]`
+        开头的电影环境描述，且**不含 pure white background**（§四 明文：
+        「环境不使用纯白背景」）。故场景的 `_tail_block` 也必须换掉背景段。
+
+        ⚠️ 必须用**精确小节号**定位：若只写「场景标准（§09）」，`_code_block_after`
+        会取到该标题下的**第一个**代码块（那是「必须生成要素」的元素清单，不是英文段）。
+        """
+        return self._en_segment("turnaround", "env_en", "4.4 可拼接英文标准段")
+
+    @property
+    def scene_negative(self) -> list[str]:
+        """§四·4.5 场景负面词（中英双写，只取英文行）。
+
+        注：`negative_by_module` 也会带一组场景词（来自负面词库 §三）；
+        这里额外取 §四·4.5 —— 两者是**不同章节**的独立声明，都应叠加。
+        """
+        if "neg_scene" in self._cache:
+            return self._cache["neg_scene"]  # type: ignore[return-value]
+        t = self.raw("turnaround")
+        i = _find_heading(t, "场景负面词")
+        terms: list[str] = []
+        for b in _code_block_after(t, i):
+            for part in b.split(","):
+                s = part.strip()
+                # 只取英文行（含中文的行整体跳过）
+                if s and not re.search(r"[\u4e00-\u9fa5]", s) and s not in terms:
+                    terms.append(s)
+        self._cache["neg_scene"] = terms
+        return terms  # type: ignore[return-value]
 
     # ── 文字屏蔽（RULE-005）──
     @property

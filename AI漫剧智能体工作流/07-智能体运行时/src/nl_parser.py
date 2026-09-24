@@ -92,6 +92,9 @@ class ParsedInput:
     color_hints: list[str] = field(default_factory=list)
     material_hints: list[str] = field(default_factory=list)
     target_asset: str = ""
+    # 输入里**提到的资产 ID**（如「给 CHR_001 建表情集」）——
+    # 表情/动作资产必须挂在角色上（`EXP_<角色>_<表情名>`），故需要它。
+    related_ids: list[str] = field(default_factory=list)
     change_fields: list[str] = field(default_factory=list)
     no_auto_complete: bool = False
     parser: str = "rule"
@@ -181,17 +184,85 @@ def _object_after_measure(text: str, words: list[str], span: int = 12) -> str:
     return ""
 
 
-def _detect_asset_type(text: str) -> str:
-    if any(k in text for k in ("场景", "环境")):
-        return "environment"
+# 表情 / 动作（EXP_ / POS_）—— 必须挂在角色上，故识别优先于「有人物词就是角色」
+EXPRESSION_WORDS = ("表情集", "表情图", "表情表", "表情库", "神态集", "表情")
+POSE_WORDS = ("动作集", "动作图", "动作表", "姿势集", "姿态集", "动作库", "姿势", "姿态")
 
-    # ① 「量词 + 宾语」优先 —— 用户要做的"那个东西"是什么，比句中提到谁更重要
+# 场景**名词**（ENV_）—— ⚠️ 这里**只放"空间/建筑"本身的名词**，
+# **绝不能放世界观形容词**（废土 / 赛博 / 末日 / 霓虹 …）。
+# 因为「一个30岁的**废土**女佣兵」含"废土"，若把它当场景词 → 角色被误判成场景。
+# 世界观与题材由 `scene_agent.SCENE_PRESETS` 的 keys 单独匹配（那是**选定预设**用的，
+# 只在类型已判定为 environment 之后才走）。
+SCENE_WORDS = (
+    # 军事/科技
+    "指挥中心", "控制室", "指挥部", "舰桥", "实验室", "基地", "舱内", "舱",
+    "军营", "工厂", "仓库", "机库",
+    # 废墟/城市
+    "废墟", "遗迹", "残垣", "街道", "市区", "都市", "巷", "天台", "屋顶",
+    "广场", "港口", "码头", "车站", "桥",
+    # 自然
+    "荒野", "沙漠", "雪原", "冰川", "荒原", "森林", "山林", "峡谷", "海岸", "洞穴",
+    # 古风
+    "宫殿", "大殿", "厅堂", "庭院", "府邸", "神殿", "祭坛", "客栈", "酒馆",
+    # 战场
+    "战场", "战壕", "战地",
+    # 地下/室内
+    "地下", "地窟", "隧道", "房间", "卧室", "客厅", "公寓", "居所", "室内",
+    # 其他常见
+    "教堂", "墓地", "医院", "学校", "图书馆",
+)
+
+
+_LEAD_VERBS = ("帮我设计", "帮我做", "帮我画", "帮我生成", "设计", "做一个", "做", "画一个", "画", "生成")
+_MEASURE_FILLERS = "一个一把一件一套一条一只台的，,。 "
+
+
+def short_name(raw: str) -> str:
+    """从整句输入里裁出可读的资产名（供道具/服装/场景共用）。
+
+    例：「给女佣兵设计一套破损军用风衣」→「破损军用风衣」
+    ⚠️ 不裁的话，资产名会是**整句用户输入**（实测：`CST_001` 的名字是
+    「给女佣兵设计一套破损军用风衣」），它还会整串进英文 prompt。
+    """
+    s = (raw or "").strip()
+    # 优先取「量词 + 宾语」那一节
+    m = re.search(r"(?:套|件|条|把|支|柄|台|个)([\u4e00-\u9fa5A-Za-z]{2,12})", s)
+    if m:
+        s = m.group(1)
+    else:
+        for v in _LEAD_VERBS:
+            if s.startswith(v):
+                s = s[len(v):]
+                break
+        s = s.lstrip(_MEASURE_FILLERS)
+    return (s[:20] or "").strip()
+
+
+def _detect_asset_type(text: str) -> str:
+    """判定资产类型。**顺序即优先级**，每一步的理由见行内注释。"""
+    # ① 表情 / 动作：带「集 / 图 / 表」标记，**无歧义**，且优先于角色 ——
+    #    「给女佣兵建表情集」含「女」，若先判人物词会被误判成角色。
+    if any(k in text for k in EXPRESSION_WORDS):
+        return "expression"
+    if any(k in text for k in POSE_WORDS):
+        return "pose"
+
+    # ② 「量词 + 宾语」—— 用户要做的"那个东西"是什么，比句中提到谁更重要
     if _object_after_measure(text, COSTUME_WORDS):
         return "costume"
     if _object_after_measure(text, PROP_WORDS):
         return "prop"
 
+    # ③ 人物信号（性别 / 年龄）—— ③④⑤ 都要用它做护栏
     has_person = bool(_find_gender(text)) or bool(re.search(r"\d{1,3}\s*岁", text))
+
+    # ④ 场景**名词**（不含世界观形容词）—— 有明确空间名词、且句中不是在描述某个人
+    if not has_person and any(k in text for k in SCENE_WORDS):
+        return "environment"
+    if not has_person and any(k in text for k in ("场景", "环境")):
+        return "environment"
+
+    # ⑤ 兜底：道具 / 服装关键词
     if any(w in text for w in PROP_WORDS) and not has_person:
         return "prop"
     if any(w in text for w in COSTUME_WORDS) and not has_person:
@@ -199,10 +270,26 @@ def _detect_asset_type(text: str) -> str:
     return "character"
 
 
+# 输入里出现的**资产 ID**（项目规范前缀 + 蓝图前缀两种写法都认）
+_ID_IN_TEXT = re.compile(
+    r"(?:^|[^A-Za-z0-9_])((?:CHR|CST|PRP|ENV|EXP|POS|SHT|VID|AUD)_[A-Za-z0-9_]+"
+    r"|(?:CHAR|COSTUME|PROP|SCENE|POSE)-\d{1,3}[A-Za-z0-9_\-]*)")
+
+
+def _collect_ids(text: str) -> list[str]:
+    out: list[str] = []
+    for m in _ID_IN_TEXT.finditer(text):
+        v = m.group(1).rstrip("_")
+        if v not in out:
+            out.append(v)
+    return out
+
+
 def parse(text: str, default_type: str = "") -> ParsedInput:
     """规则解析入口。`default_type` 非空时强制该类型（供 CLI --type 覆盖）。"""
     text = (text or "").strip()
     p = ParsedInput(raw=text)
+    p.related_ids = _collect_ids(text)
     p.no_auto_complete = any(w in text for w in NO_COMPLETE_WORDS)
 
     is_mod, fields, target = _detect_modify(text)

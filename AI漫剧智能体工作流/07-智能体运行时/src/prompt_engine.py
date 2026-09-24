@@ -19,6 +19,8 @@
 
 from __future__ import annotations
 
+import re
+
 from .schema import AssetCard
 
 # 中文视觉词 → 英文（保证 prompt 真的可用，而非中英混排）
@@ -150,8 +152,64 @@ def _en(values) -> str:
 # 版式段（三视图硬标准来自工作流，此处只做「组合」）
 # ─────────────────────────────────────────────────────────────
 
-def _layout_block(rules, asset_type: str) -> tuple[str, str]:
-    """返回 (版式段, 一致性段)。三视图与服装/道具用各自的标准段。"""
+def _fill_scene_seg(seg: str, sd) -> str:
+    """把场景英文段里的 `[占位符]` 换成实际场景 DNA 值（英文优先）。
+
+    工作流 §4.4 给的是**带占位符的骨架**：
+        `Cinematic environment, [建筑类型], [空间尺度], [材料], [光线方向与性质], [氛围], …`
+    直接用会在英文 prompt 里留 5 个中文占位符 —— 必须替换掉。
+    """
+    pairs = [("[建筑类型]", sd.building_en or sd.building),
+             ("[空间尺度]", sd.spatial_scale_en or sd.spatial_scale),
+             ("[材料]", sd.materials_en or sd.materials),
+             ("[光线方向与性质]", sd.light_source_en or sd.light_source),
+             ("[氛围]", sd.atmosphere_en or sd.atmosphere),
+             ("[建筑风格]", sd.architectural_style_en or sd.architectural_style)]
+    for k, v in pairs:
+        if v:
+            seg = seg.replace(k, v)
+    # 仍存的占位符（字段未补全）→ 去掉方括号，避免进 prompt 干扰模型
+    return re.sub(r"\[[^\]]*\]", "", seg).replace(", ,", ",").strip()
+
+
+def _layout_block(rules, card) -> tuple[str, str]:
+    """返回 (版式段, 一致性段)。各类资产用**各自**的标准段。
+
+    ⚠️ 入参从 `asset_type` 改为 **`card`**（2026-09-24）：场景版式需要 `scene_dna`
+    才能填掉工作流骨架里的占位符；表情/动作版式需要 `sheet_dna` 的网格与表项。
+    """
+    asset_type = card.type
+
+    if asset_type == "environment":
+        # ⚠️ 场景**不使用纯白背景**（§四 明文），故整段（含背景）都与前三类不同
+        seg = _fill_scene_seg(rules.scene_en_segment, card.scene_dna)
+        layout = f"LAYOUT: {seg}"
+        cons = ("CONSISTENCY: lock architecture, doors and windows, furniture, floor, "
+                "light sources and the main spatial relationship. Weather, time of day, "
+                "present characters, light state and prop placement may vary. "
+                "Never restructure the space without story reason.")
+        return layout, cons
+
+    if asset_type in ("expression", "pose"):
+        sh = card.sheet_dna
+        items = ", ".join(sh.items_en) or ", ".join(sh.items)
+        if asset_type == "expression":
+            layout = (f"LAYOUT: {sh.layout} grid, expression sheet, facial expressions, "
+                      f"close-up portraits, {items}, grid layout, consistent character, "
+                      f"clean white background")
+            cons = ("CONSISTENCY: ONLY eyebrows, eyes, mouth, facial muscles and "
+                    "micro-expressions may change between cells. Face shape, age, "
+                    "hairstyle, hair colour, skin tone, eye colour and core identity "
+                    "MUST stay identical in every cell. Do not redesign the person.")
+        else:
+            layout = (f"LAYOUT: {sh.layout}, pose sheet, multiple poses of the same "
+                      f"character side by side, full body, {items}, consistent character")
+            cons = ("CONSISTENCY: the same character in every pose — face, age, hairstyle, "
+                    "body proportion and clothing state identical. Every pose must obey "
+                    "anatomy, a real centre of gravity and plausible force chains; no broken "
+                    "limbs, no reversed joints, no floating.")
+        return layout, cons
+
     if asset_type == "costume":
         seg = rules.costume_en_segment
         layout = (f"LAYOUT: {seg}")
@@ -248,9 +306,116 @@ def _is_extra_name(card: AssetCard) -> bool:
     return name != auto
 
 
+def _scene_tail_block(rules, sd) -> str:
+    """场景的收尾段 —— **不能复用角色的 `_tail_block`**。
+
+    ⚠️ 角色/道具段的背景是「pure white background … no scenery, no props」，
+    而场景**恰恰需要**环境与景深（§四 明文「环境不使用纯白背景」）。
+    若复用，会得到自相矛盾的 prompt（既要求纯白背景、又要求 cinematic environment）。
+    """
+    q_en = rules.quality_params_en
+    cine = rules.cinematic_concrete or (
+        "controlled key light, soft fill, subtle rim light, physically plausible "
+        "falloff, controlled contrast, cinematic depth")
+    parts = [
+        f"LIGHTING: {sd.light_source_en or sd.light_source or 'one clear key light direction'}",
+        f"TIME OF DAY: {sd.time_of_day_en or sd.time_of_day}" if (sd.time_of_day_en or sd.time_of_day) else "",
+        f"WEATHER: {sd.weather_en or sd.weather}" if (sd.weather_en or sd.weather) else "",
+        f"CINEMATIC QUALITY (concrete, not just the word 'cinematic'): {cine}",
+        f"STYLE: cinematic environment concept art, production design quality, "
+        f"ultra-high detail. Quality targets: {q_en}.",
+    ]
+    return "\n".join(p for p in parts if p)
+
+
 def build_prompt_en(card: AssetCard, rules) -> str:
     vd, ff, sv = card.visual_dna, card.fixed_features, card.stage_variables
-    layout, cons = _layout_block(rules, card.type)
+    layout, cons = _layout_block(rules, card)
+
+    # ── 场景（ENV_）：字段与其它三类完全不同，用 SceneDNA ──
+    if card.type == "environment":
+        sd = card.scene_dna
+        parts = [
+            "Create a professional cinematic ENVIRONMENT concept design for an "
+            "AI-animation / game production art library.",
+            f"SCENE: {pick(sd.name_en, card.name) or 'environment'}"
+            + (f" ({tr(card.world)})" if card.world else ""),
+            "ARCHITECTURE: " + _join([pick(sd.building_en, sd.building),
+                                      pick(sd.architectural_style_en, sd.architectural_style)]),
+            "SPACE & SCALE: " + _join([pick(sd.spatial_scale_en, sd.spatial_scale),
+                                       pick(sd.scale_vs_character, "")]),
+            "MATERIALS: " + pick(sd.materials_en, sd.materials),
+            "ATMOSPHERE: " + pick(sd.atmosphere_en, sd.atmosphere),
+            "ERA: " + pick(sd.era_en, sd.era),
+            "CIRCULATION: " + pick(sd.circulation_en, sd.circulation),
+            "FOREGROUND / MIDGROUND / BACKGROUND: " + _join([
+                pick(sd.foreground_en, sd.foreground),
+                pick(sd.midground_en, sd.midground),
+                pick(sd.background_en, sd.background)]),
+            "SET DRESSING: " + pick(sd.props_in_scene_en, sd.props_in_scene),
+            "COLOR: " + pick(sd.primary_color_en, sd.primary_color),
+            "MULTI-ANGLE LOCK: " + ", ".join(sd.locked_elements_en or sd.locked_elements)
+            if (sd.locked_elements_en or sd.locked_elements) else "",
+            "MAY VARY: " + ", ".join(sd.variable_elements_en or sd.variable_elements)
+            if (sd.variable_elements_en or sd.variable_elements) else "",
+            layout, cons, _scene_tail_block(rules, sd),
+        ]
+        return "\n".join(p for p in parts if p and not p.endswith(": "))
+
+    # ── 服装（CST_）：**必须单独一支** ──
+    # ⚠️ 原版没有这一支 → 服装 prompt 走角色分支，开头写成
+    #    「character design sheet」、STYLE 写成「character design」，
+    #    对一件衣服来说是错的（实测踩到）。
+    if card.type == "costume":
+        parts = [
+            "Create a professional 16:9 landscape COSTUME design sheet for a cinematic "
+            "AI-animation / game production asset library.",
+            f"GARMENT: {card.name or 'garment'}"
+            + (f" ({tr(card.world)})" if card.world else ""),
+            "LAYERS: " + pick(vd.layers_en, vd.layers),
+            "SILHOUETTE: " + pick(vd.silhouette_en, vd.silhouette),
+            "MATERIALS: " + _pl([(vd.material_en, vd.material),
+                                 (vd.surface_texture_en, vd.surface_texture)]),
+            "CONSTRUCTION: " + pick(vd.structure_en, vd.structure),
+            "COLOUR: " + pick(vd.primary_color_en, vd.primary_color),
+            "WEAR: " + pick(vd.wear_en, vd.wear),
+            "ACCESSORIES: " + pick(vd.signature_accessory_en, vd.signature_accessory),
+            layout, cons, _tail_block(rules),
+        ]
+        return "\n".join(p for p in parts if p and not p.endswith(": "))
+
+    # ── 表情集 / 动作集（EXP_ / POS_）：挂在角色上，锚点必须写满 ──
+    if card.type in ("expression", "pose"):
+        sh = card.sheet_dna
+        head = ("Create a professional expression sheet for a cinematic AI-animation "
+                "character asset library." if card.type == "expression" else
+                "Create a professional pose sheet for a cinematic AI-animation "
+                "character asset library.")
+        parts = [
+            head,
+            f"SUBJECT: {sh.owner or card.name or 'character'}",
+            # ⚠️ 只给**英文** ITEMS —— 曾同时输出 CN `ITEMS:` 与 `ITEMS (EN):`，
+            #    前者把整张中文表塞进了英文 prompt（实测：动作集 175 字）。
+            "ITEMS: " + (" · ".join(sh.items_en or sh.items)),
+            "CONSISTENCY CONSTRAINTS (must NOT change): " + ", ".join(sh.consistency_anchors),
+            "MUTABLE (only these may change): "
+            + ", ".join(sh.mutable_parts_en or sh.mutable_parts),
+        ]
+        if card.type == "expression":
+            parts.append("IRON RULE: only eyebrows, eyes, mouth, facial muscles and "
+                         "micro-expressions change; face shape, age, hairstyle, hair "
+                         "colour and core identity are FIXED.")
+        else:
+            # ⚠️ 用英文版（`physics_checks_en`）—— 中文版会往英文 prompt 里塞整段中文
+            parts.append("PHYSICS CHECKS (must all hold): "
+                         + " | ".join(sh.physics_checks_en or sh.physics_checks))
+            if sh.clothing_state:
+                parts.append(f"CLOTHING STATE: {sh.clothing_state}")
+            if sh.prop_ids:
+                parts.append("PROP REFERENCES: " + ", ".join(sh.prop_ids))
+        parts += [layout, cons, _tail_block(rules)]
+        return "\n".join(p for p in parts if p and not p.endswith(": "))
+
 
     if card.type == "prop":
         parts = [
@@ -317,6 +482,60 @@ def build_prompt_en(card: AssetCard, rules) -> str:
 
 def build_prompt_cn(card: AssetCard) -> str:
     vd = card.visual_dna
+
+    # ── 场景（ENV_）──
+    if card.type == "environment":
+        sd = card.scene_dna
+        lines = [
+            "【场景资产图】电影级环境概念设计，用于 AI 漫剧资产库",
+            f"场景：{' / '.join(x for x in [card.name, tr(card.world)] if x)}",
+            f"建筑：{_join([sd.building, sd.architectural_style])}",
+            f"空间与尺度：{_join([sd.spatial_scale, sd.scale_vs_character])}",
+            f"材料：{sd.materials}",
+            f"光线：{sd.light_source}",
+            f"氛围：{sd.atmosphere}",
+            f"时代：{sd.era}",
+            f"动线：{sd.circulation}",
+            f"前中后景：{_join([sd.foreground, sd.midground, sd.background])}",
+            f"陈设：{sd.props_in_scene}",
+            f"配色：{sd.primary_color}",
+            f"多角度锁定：{' / '.join(sd.locked_elements)}",
+            f"允许变化：{' / '.join(sd.variable_elements)}",
+            "⚠️ 背景：**不使用纯白背景**（场景与角色/道具的核心区别）",
+            "版式：单张电影级环境图，前景 / 中景 / 后景分层清晰，空间可读",
+            "品质：8K 超清、影视级场景概念设计质感",
+        ]
+        return "\n".join(x for x in lines if x and not x.endswith("："))
+
+    # ── 表情集 / 动作集 ──
+    if card.type in ("expression", "pose"):
+        sh = card.sheet_dna
+        is_exp = card.type == "expression"
+        lines = [
+            f"【{'表情集' if is_exp else '动作集'}】用于 AI 漫剧资产库",
+            f"所属角色：{sh.owner or '（未指定）'}",
+            f"表项（{len(sh.items)} 项{'，基线' if sh.is_baseline else ''}）："
+            f"{' / '.join(sh.items)}",
+            f"版式：{sh.layout}",
+            f"一致性锚点（**绝不允许变**）：{' / '.join(sh.consistency_anchors)}",
+            f"允许改变：{' / '.join(sh.mutable_parts)}",
+        ]
+        if is_exp:
+            lines += [
+                "铁律：只改 眉 / 眼 / 嘴 / 面部肌肉 / 微表情",
+                "⚠️ 脸型 / 年龄 / 发型 / 发色 / 核心身份 **保持不变**（否则等于换人）",
+                "背景：纯净背景，便于裁剪单格",
+            ]
+        else:
+            lines += [
+                f"动作必须符合：{' ； '.join(sh.physics_checks)}",
+                f"服装状态：{sh.clothing_state or '（未指定，需与剧情阶段一致）'}",
+                f"道具引用：{' / '.join(sh.prop_ids) or '（无）'}",
+                "背景：纯净背景，同一角色多动作并排",
+            ]
+        lines.append("品质：8K 超清、拟真影视级")
+        return "\n".join(x for x in lines if x and not x.endswith("："))
+
     role = {"character": "角色", "prop": "道具", "costume": "服装",
             "environment": "场景"}.get(card.type, "资产")
     lines = [
@@ -354,6 +573,21 @@ def build_prompts(card: AssetCard, rules, *, failures: list[str] | None = None
     en = build_prompt_en(card, rules)
 
     neg = rules.negative_for(card.type, failures)
+
+    # 场景：追加 §四·4.5 场景负面词（与负面词库 §三 的场景组**是两处独立声明**）
+    if card.type == "environment":
+        for t in rules.scene_negative:
+            if t and t not in neg:
+                neg = f"{neg}, {t}"
+
+    # 表情 / 动作：追加库 §三 产线规范里的固定负面词
+    if card.type == "expression":
+        from .expression_agent import negative_extra
+        neg = f"{neg}, {negative_extra()}"
+    elif card.type == "pose":
+        from .pose_agent import negative_extra
+        neg = f"{neg}, {negative_extra()}"
+
     tb = rules.text_block_negative
     if tb and tb not in neg:
         neg = f"{neg}, {tb}"

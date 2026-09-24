@@ -127,7 +127,8 @@ REGISTRY: list[AgentSpec] = [
             "02-服化道/模板/CHANGELOG.yaml",
             "02-服化道/模板/PROJECT_STATE.yaml",
         ],
-        outputs=["VISUAL_BIBLE", "角色资产", "服装资产", "道具资产", "场景资产", "风格锁定表"],
+        outputs=["VISUAL_BIBLE", "角色资产", "服装资产", "道具资产", "场景资产",
+                 "表情集 EXP_", "动作集 POS_", "风格锁定表"],
         gate="资产门禁",
         gate_checks=[
             GateCheck("VISUAL_BIBLE 锁定", ["VISUAL_BIBLE", "视觉圣经"]),
@@ -135,7 +136,8 @@ REGISTRY: list[AgentSpec] = [
             GateCheck("风格锁定表 9 项齐全", ["风格锚点", "风格锁定", "STYLE", "画风"]),
         ],
         triggers=["生成角色", "三视图", "角色", "服装", "道具", "场景", "资产",
-                  "视觉资产", "出图", "表情", "动作", "资产库"],
+                  "视觉资产", "出图", "表情", "动作", "资产库", "环境",
+                  "表情集", "动作集", "姿势", "三视图资产"],
         input_forms=["剧本", "小说", "一张参考图"],
         plugin="asset",           # ⭐ 唯一带结构化超能力的模块（资产卡 + 出图）
     ),

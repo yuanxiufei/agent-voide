@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+from .nl_parser import short_name
 from .schema import AssetCard, VisualDNA
 
 # 道具品类 → 结构 / 材质 / 工艺 / 表面 / 磨损 预设（**中英双语**）
@@ -114,6 +115,9 @@ def complete(card: AssetCard, parsed, rules, llm=None) -> tuple[AssetCard, list[
         notes.append(f"⚠️ 采用用户指定材质：{vd.material}")
 
     _set_if_empty(vd, "primary_color", "哑光黑 + 磨砂钢原色")
+    # ⚠️ 必须显式给英文 —— 靠 `tr()` 逐词替换会产出 `哑光black + brushed steel原色`
+    #    这种**中英混排**（实测踩到）。
+    _set_if_empty(vd, "primary_color_en", "matte black and brushed-steel natural tone")
     _set_if_empty(vd, "signature_points",
                   [x for x in [vd.structure.split("+")[0].strip() if vd.structure else "",
                                vd.surface_texture.split("，")[0]] if x])
@@ -127,24 +131,10 @@ def complete(card: AssetCard, parsed, rules, llm=None) -> tuple[AssetCard, list[
     return card, notes
 
 
-_LEAD_VERBS = ("设计", "帮我做", "帮我设计", "做一个", "做", "画一个", "画", "生成")
-
-
-def _short_name(raw: str) -> str:
-    """从整句输入里裁出可读的资产名（去掉「设计/帮我做」这类动词前缀）。"""
-    s = (raw or "").strip()
-    for v in _LEAD_VERBS:
-        if s.startswith(v):
-            s = s[len(v):]
-            break
-    s = s.lstrip("一个一把一件的 ，,。")
-    return (s[:20] or "prop").strip()
-
-
 def build_card(parsed, asset_id: str, now: str) -> AssetCard:
     return AssetCard(
         id=asset_id, type="prop",
-        name=parsed.name or _short_name(parsed.raw),
+        name=parsed.name or short_name(parsed.raw) or "prop",
         source=parsed.raw, created_at=now, updated_at=now,
         world=parsed.world, occupation=parsed.occupation,
     )

@@ -208,6 +208,47 @@ def check_required(card: AssetCard, rules) -> ConsistencyReport:
             rep.add("warn", "PROP_FIELDS",
                     f"道具必填字段缺 {len(missing)}/{len(need)} 项："
                     + "、".join(missing[:8]) + ("…" if len(missing) > 8 else ""))
+    elif card.type == "environment":
+        # 场景 —— 按 §四·4.1 的 11 项必须生成要素检查（**不查角色 DNA**）
+        sd = card.scene_dna
+        CRIT = [("building", "建筑"), ("spatial_scale", "空间尺度"), ("materials", "材料"),
+                ("light_source", "光线"), ("atmosphere", "氛围"), ("era", "时代"),
+                ("circulation", "人物动线"), ("foreground", "前景"),
+                ("midground", "中景"), ("background", "后景")]
+        missing = [cn for f, cn in CRIT if not getattr(sd, f)]
+        if missing:
+            rep.add("error", "SCENE_ELEMENTS",
+                    "场景必须生成要素缺失：" + "、".join(missing)
+                    + "（§四·4.1 要求 11 项齐全）")
+        if not (sd.architectural_style or sd.architectural_style_en):
+            rep.add("warn", "NO_SCENE_STYLE",
+                    "建筑风格为空 —— 快速公式要求写清风格，否则与 VISUAL_BIBLE 可能不一致")
+        if not sd.locked_elements:
+            rep.add("warn", "NO_SCENE_LOCK",
+                    "多角度锁定项为空 —— §32 要求同一 ENV 锁定建筑/门窗/家具/地面/光源/主空间关系")
+        # ⚠️ 场景**不需要**「纯白背景」——恰恰相反，§四 明文「环境不使用纯白背景」。
+
+    elif card.type in ("expression", "pose"):
+        # 表情/动作集 —— 按库 §一/§二 与 §三 产线规范检查
+        sh = card.sheet_dna
+        if not sh.owner:
+            rep.add("error", "SHEET_NO_OWNER",
+                    "未绑定所属角色 —— ID 规范要求 `EXP_<角色>_<表情名>` / "
+                    "`POS_<3位>_<动作名>`，脱离角色的表情/动作集无法保证一致性")
+        need = 16 if card.type == "expression" else 18
+        if len(sh.items) < need:
+            rep.add("warn", "SHEET_ITEMS_FEW",
+                    f"{'表情' if card.type == 'expression' else '动作'}只有 "
+                    f"{len(sh.items)} 项（基线要求 {need} 项）")
+        if not sh.consistency_anchors:
+            rep.add("error", "SHEET_NO_ANCHORS",
+                    "一致性锚点为空 —— 铁律要求写满 FACE/HAIR/AGE 等，"
+                    "否则「换表情变成换人」")
+        if card.type == "expression" and set(sh.mutable_parts) - {
+                "眉", "眼", "嘴", "面部肌肉", "微表情"}:
+            rep.add("error", "EXPRESSION_RULE_BREACH",
+                    "`mutable_parts` 超出 §10 铁律允许范围（只允许 眉/眼/嘴/肌肉/微表情）")
+
     else:
         # 角色：关键识别项不得为空
         CRIT = [("face_shape", "脸型"), ("eye_shape", "眼型"), ("hair_length", "发长"),

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass, field, asdict
 from typing import Any
 
@@ -58,11 +59,20 @@ ID_CROSSWALK = {
 
 def make_id(asset_type: str, n: int, style: str = "project",
             owner: str = "", name: str = "") -> str:
+    """按模板生成 ID。
+
+    ⚠️ 表情/动作的模板含 `{owner}` / `{name}` —— 为空时会生成 `POS_001_` / `EXP__`
+    这种**带悬空分隔符**的 ID（实测踩到）。故格式化后做一次清理：
+      ① 折叠连续分隔符（`EXP__` → `EXP_`）
+      ② 去掉尾部分隔符（`POS_001_` → `POS_001`）
+    """
     tbl = ID_STYLES.get(style) or ID_STYLES["project"]
     tpl = tbl.get(asset_type)
     if tpl is None:
         raise ValueError(f"未知资产类型：{asset_type}（可选 {list(tbl)}）")
-    return tpl.format(n=n, owner=owner, name=name)
+    out = tpl.format(n=n, owner=(owner or "").replace("_", ""), name=name or "")
+    out = re.sub(r"([_\-])\1+", r"\1", out)          # 折叠连续分隔符
+    return re.sub(r"[_\-]+$", "", out)               # 去尾部分隔符
 
 
 _PATTERNS = [
@@ -210,6 +220,91 @@ class VisualDNA:
 
 
 @dataclass
+class SceneDNA:
+    """场景 DNA —— 字段按工作流 `02-服化道/引擎/TURNAROUND-STANDARD.md` **§四 场景标准（§09）**
+    的「必须生成要素」11 项 + §37 输出协议的 Environment Lock / Lighting Lock 对齐。
+
+    ⚠️ **场景与前三类的核心区别：环境不使用纯白背景**（§四 开头明文）。
+    故 `layout_scene` 与角色/道具的三视图版式完全不同。
+    """
+
+    # ── 必须生成要素（§四·4.1 逐项）──
+    building: str = ""            # 建筑类型
+    spatial_scale: str = ""       # 空间尺度
+    materials: str = ""           # 材料
+    light_source: str = ""        # 光线方向与性质（Lighting Lock 核心）
+    atmosphere: str = ""          # 氛围
+    era: str = ""                 # 时代
+    circulation: str = ""         # 人物动线
+    foreground: str = ""          # 前景
+    midground: str = ""           # 中景
+    background: str = ""          # 后景
+
+    # ── §四·4.2 一致性要求：与 Character+Costume+Props 对齐 ──
+    props_in_scene: str = ""      # 陈设道具（对应 PROP INDEX）
+    scale_vs_character: str = ""  # 空间尺度 vs 角色身高比例
+
+    # ── §四·4.3 多角度：锁定 vs 允许变化 ──
+    locked_elements: list[str] = field(default_factory=list)   # 建筑/门窗/家具/地面/光源/主空间关系
+    variable_elements: list[str] = field(default_factory=list)  # 天气/时间/人物/灯光状态/道具摆放
+    # 英文伴生（进 English prompt；缺了它这两行会在英文里留一串中文）
+    locked_elements_en: list[str] = field(default_factory=list)
+    variable_elements_en: list[str] = field(default_factory=list)
+
+    # ── 样式 ──
+    architectural_style: str = ""  # 建筑风格（快速公式第 2 段）
+    time_of_day: str = ""
+    weather: str = ""
+    primary_color: str = ""
+
+    # ── 英文伴生字段（进 English Environment Prompt）──
+    name_en: str = ""             # 场景的英文名（`SCENE: …` 段用）
+    building_en: str = ""
+    spatial_scale_en: str = ""
+    materials_en: str = ""
+    light_source_en: str = ""
+    atmosphere_en: str = ""
+    era_en: str = ""
+    circulation_en: str = ""
+    foreground_en: str = ""
+    midground_en: str = ""
+    background_en: str = ""
+    props_in_scene_en: str = ""
+    architectural_style_en: str = ""
+    time_of_day_en: str = ""
+    weather_en: str = ""
+    primary_color_en: str = ""
+
+
+@dataclass
+class SheetDNA:
+    """表情集 / 动作集 DNA —— 字段按 `02-服化道/引擎/EXPRESSION-POSE-LIBRARY.md`。
+
+    表情与动作**必须挂在角色上**（ID 规范：`EXP_<角色>_<表情名>` / `POS_<3位>_<动作名>`），
+    故用 `owner` 记录所属角色，并把「铁律」要求的**一致性锚点**显式保存。
+    """
+
+    owner: str = ""                       # 所属角色 ID（如 CHR_001）
+    sheet_kind: str = ""                  # expression | pose
+    items: list[str] = field(default_factory=list)        # 中文名（如「微笑」）
+    items_en: list[str] = field(default_factory=list)      # 英文描述词（库中原词）
+    layout: str = ""                      # 网格布局（§1.3：4→2×2 · 16→4×4 · 25→5×5）
+    is_baseline: bool = False             # 是否基线（表情 16 式必建）
+
+    # ── 铁律（§10）：这些**绝不允许变**，必须写进 Consistency Constraints ──
+    consistency_anchors: list[str] = field(default_factory=list)
+    # ── 允许变的（只改这些）──
+    mutable_parts: list[str] = field(default_factory=list)
+    mutable_parts_en: list[str] = field(default_factory=list)   # 其英文（进 EN prompt）
+
+    # ── 动作专用（§11）──
+    clothing_state: str = ""              # 服装状态必须与剧情阶段一致（CST_00X_状态）
+    prop_ids: list[str] = field(default_factory=list)   # 道具必须引用 PROP ID
+    physics_checks: list[str] = field(default_factory=list)  # 人体结构/重心/力学/身份/服装限制/道具使用
+    physics_checks_en: list[str] = field(default_factory=list)  # 其英文（进 EN prompt）
+
+
+@dataclass
 class AssetCard:
     id: str = ""
     type: str = ""
@@ -231,6 +326,8 @@ class AssetCard:
     fixed_features: FixedFeatures = field(default_factory=FixedFeatures)
     stage_variables: StageVariables = field(default_factory=StageVariables)
     visual_dna: VisualDNA = field(default_factory=VisualDNA)
+    scene_dna: SceneDNA = field(default_factory=SceneDNA)
+    sheet_dna: SheetDNA = field(default_factory=SheetDNA)
 
     locked: list[str] = field(default_factory=list)
     editable: list[str] = field(default_factory=list)
@@ -256,6 +353,8 @@ class AssetCard:
         ff = d.pop("fixed_features", {}) or {}
         sv = d.pop("stage_variables", {}) or {}
         vd = d.pop("visual_dna", {}) or {}
+        sd = d.pop("scene_dna", {}) or {}
+        sh = d.pop("sheet_dna", {}) or {}
         known = set(cls.__dataclass_fields__)
         card = cls(**{k: v for k, v in d.items() if k in known})
         card.fixed_features = FixedFeatures(
@@ -264,6 +363,10 @@ class AssetCard:
             **{k: v for k, v in sv.items() if k in StageVariables.__dataclass_fields__})
         card.visual_dna = VisualDNA(
             **{k: v for k, v in vd.items() if k in VisualDNA.__dataclass_fields__})
+        card.scene_dna = SceneDNA(
+            **{k: v for k, v in sd.items() if k in SceneDNA.__dataclass_fields__})
+        card.sheet_dna = SheetDNA(
+            **{k: v for k, v in sh.items() if k in SheetDNA.__dataclass_fields__})
         return card
 
     # ── 一致性指纹 ──
