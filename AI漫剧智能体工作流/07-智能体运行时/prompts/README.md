@@ -32,7 +32,42 @@ python main.py rules
 - 特定模型的参数偏好
 - 临时试验的版式变体
 
-文件命名约定：`<type>.<片段名>.md`（如 `character.layout.md` / `negative.extra.md`）。
+### 文件名约定
 
-> ⚠️ 覆盖机制**当前尚未实现**（V1.0 只读工作流）。若需要，
-> 实现位置在 `src/prompt_engine.py` 的各 `build_*` 函数载入前插入一层覆盖查找。
+```
+prompts/overrides/<scope>.<target>.md
+```
+
+| 部分 | 取值 | 含义 |
+|---|---|---|
+| `scope` | `all` · `character` · `costume` · `prop` · `environment` · `expression` · `pose` | 作用范围（`all` = 全部资产） |
+| `target` | `negative` | **追加**负面词 |
+| | `extra` | **追加**一段正向提示词 |
+| | `layout` | **替换**版式段（唯一有替换语义的） |
+
+例：
+
+| 文件 | 效果 |
+|---|---|
+| `all.negative.md` | 给所有资产再加几条负面词（如某平台特有的伪影） |
+| `character.extra.md` | 只给**角色**补一段（如客户指定的背景偏好） |
+| `environment.layout.md` | **换掉**场景的版式段（如改用 21:9 建立镜头） |
+
+### 两条设计原则（都是"静默坑"的预防）
+
+**① 未识别的文件名会报警，不会静默忽略。**
+写了 `character.neg.md`（`neg` 不是合法 target）→ 报告里明确列出「未生效」并给出约定。
+静默忽略最坑：你会以为「规则加了却没生效、agent 坏了」。
+
+**② 除了 `layout`，一律只有"追加"语义。**
+追加是安全的（最坏是多几条约束）；替换会**悄悄抹掉工作流的权威规则**。
+故替换只保留 `layout` 一个位置 —— 且**一致性段仍取工作流**，本机文件无法把它顶掉。
+
+### 查看实际生效了什么
+
+```bash
+python main.py rules      # 末尾「本机覆盖层」段
+python main.py doctor     # 同上
+```
+
+创建/修改资产时，返回说明里也会列出生效的覆盖项 —— **静默生效的覆盖比坏掉的更难查**。

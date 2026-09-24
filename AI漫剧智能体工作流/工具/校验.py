@@ -635,6 +635,17 @@ MECHANISM_RULES = [
         "keyword": "未实现/未实测",
         "must_in": ["07-智能体运行时/README.md"],
     },
+    # 本机覆盖层（prompts/overrides/）的两条设计原则 —— 都是"静默坑"的预防
+    {
+        "name": "07 运行时：覆盖层「未识别文件名会报警」（防静默不生效）",
+        "keyword": "未识别的文件名会报警",
+        "must_in": ["07-智能体运行时/prompts/README.md"],
+    },
+    {
+        "name": "07 运行时：覆盖层只有 layout 可替换（一致性段仍取工作流）",
+        "keyword": "一致性段仍取工作流",
+        "must_in": ["07-智能体运行时/prompts/README.md"],
+    },
 ]
 
 # 禁用前缀：pattern 命中即失败，除豁免文件外
@@ -874,6 +885,10 @@ SKIP_DIRS = {
     "__pycache__", ".venv", "venv",   # Python
     "output",                          # 07 Agent 的运行态产出（可重算）
     "vendor",                          # 07 Agent 的规则快照（工作流规则的副本）
+    # 2026-09-24 加入：`prompts/overrides/` 是**本机专属微调**（不打算回灌工作流），
+    # 属"用户本地配置"而非工作流知识。若不排除，用户每加一个覆盖文件，
+    # 工作流的「总量声明」就过时一次 —— 与 `output/` 是同一类荒谬联动。
+    "overrides",
 }
 
 

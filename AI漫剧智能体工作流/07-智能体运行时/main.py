@@ -207,6 +207,10 @@ def cmd_rules(a: argparse.Namespace) -> int:
     hr("文字屏蔽强制段（§1.6，缺权重 1.8 无效）")
     print(f"  正向：{ag.rules.text_block_positive}")
     print(f"  反向：{ag.rules.text_block_negative}")
+    # ⚠️ 覆盖项**必须展示** —— 本机覆盖是静默生效的，不显示就无从解释
+    #    「prompt 为什么和上次不一样」（实测踩过同类问题：负面词被截断显示 → 看不见权重标记）
+    hr("🧩 本机覆盖层（prompts/overrides/）")
+    print(ag.rules.overrides.report())
     return 0
 
 
@@ -242,6 +246,8 @@ def cmd_doctor(a: argparse.Namespace) -> int:
     for p in d["providers"]:
         icon = "✅" if p["available"] else "⛔"
         print(f"  {icon} {p['name']:10s} {p['reason']}")
+    hr("🧩 本机覆盖层（prompts/overrides/）")
+    print(ag.rules.overrides.report())
     hr("输图后人工复核清单（RULE-005 要求逐字检查隐蔽位置）")
     for x in d["text_risk_checklist"]:
         print(f"  □ {x}")

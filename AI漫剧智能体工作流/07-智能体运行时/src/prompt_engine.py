@@ -180,11 +180,36 @@ def _scene_keywords(sd) -> str:
 
 
 def _layout_block(rules, card) -> tuple[str, str]:
-    """返回 (版式段, 一致性段)。各类资产用**各自**的标准段。
+    """返回 (版式段, 一致性段)；先取工作流权威段，再套用**本机覆盖**。
 
     ⚠️ 入参从 `asset_type` 改为 **`card`**（2026-09-24）：场景版式需要 `scene_dna`
     才能填掉工作流骨架里的占位符；表情/动作版式需要 `sheet_dna` 的网格与表项。
+
+    ⭐ 本机覆盖（`prompts/overrides/<scope>.layout.md`）**只替换 LAYOUT 段**，
+    **一致性段仍取工作流** —— 不能让一个本机文件悄悄抹掉权威的一致性约束
+    （那正是「图会漂移」的开始）。
     """
+    layout, cons = _layout_workflow(rules, card)
+    ov = _ovr(rules)
+    if ov is not None:
+        seg = ov.layout(card.type)
+        if seg:
+            return f"LAYOUT: {seg}", cons
+    return layout, cons
+
+
+def _ovr(rules):
+    """取 `rules` 上挂的本机覆盖层（没有则 None）。
+
+    统一从这里取，是为了**所有调用点自动生效** —— 若改成"由调用方传参"，
+    漏传一处就会静默不生效（本项目最怕的失败形态）。
+    """
+    ov = getattr(rules, "overrides", None)
+    return ov if (ov is not None and not ov.is_empty()) else None
+
+
+def _layout_workflow(rules, card) -> tuple[str, str]:
+    """**工作流权威**版式段（不含本机覆盖）。"""
     asset_type = card.type
 
     # ── 场景 · 360° 全景基准（§4.6）──
@@ -628,6 +653,22 @@ def build_prompts(card: AssetCard, rules, *, failures: list[str] | None = None
     tb = rules.text_block_negative
     if tb and tb not in neg:
         neg = f"{neg}, {tb}"
+
+    # ── 本机覆盖层（`prompts/overrides/`）──
+    # ⭐ 只在**这一处**应用，理由：`build_prompt_en` 有 6 个 return 分支
+    #    （角色/服装/道具/场景/全景/表情动作），逐个加必然漏一个 —— 那就成了
+    #    「某类资产的覆盖不生效」这种最难查的静默 bug。
+    ov = _ovr(rules)
+    if ov is not None:
+        for t in ov.negative_extra(card.type):
+            if t and t not in neg:
+                neg = f"{neg}, {t}"
+        extra = ov.prompt_extra(card.type)
+        if extra:
+            # ⚠️ 表头必须**纯英文** —— 这里进的是英文 prompt。
+            #    我自己第一版写成「（本机追加，来源 prompts/overrides/）」，
+            #    于是角色英文段凭空多了 6 个中文字（这是本项目第 6 次同款问题）。
+            en = f"{en}\n\nLOCAL OVERRIDE (appended by prompts/overrides/):\n{extra}"
 
     card.prompt_en, card.prompt_cn, card.negative_prompt = en, cn, neg
     return en, cn, neg

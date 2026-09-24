@@ -211,7 +211,7 @@ cp .env.example .env      # 填入 Key（.env 已在 .gitignore）
 | **场景 S01–S06 六角度 + 索引表**（§4.1） | ✅ 已实现（`angles`，见 §四） |
 | **产出核验**（卡/提示词/图/索引表） | ✅ 已实现（`verify`）—— 只核验**客观可验证**项 |
 | **图像语义比对**（图与图是否同一角色/空间） | ❌ **未实现，且不建议硬做**（见下） |
-| `prompts/overrides/` 覆盖机制 | ❌ 未实现（目录已留） |
+| `prompts/overrides/` 本机覆盖层 | ✅ 已实现（`<scope>.<target>.md`，见 `prompts/README.md`） |
 
 > ### ⚠️ 为什么 `verify` **不做**"图与图是否同一个人"的判定
 >

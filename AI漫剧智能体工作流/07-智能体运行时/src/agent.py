@@ -197,6 +197,32 @@ class DramaAssetAgent:
                 "images": result.image_paths, "consistency": rep,
                 "files": {"card": str(path), "prompt": str(pr), "metadata": str(md)}}
 
+    # ── 本机覆盖层的可见性 ──
+
+    def _override_notes(self) -> list[str]:
+        """把"本机覆盖生效了什么"写进返回说明。
+
+        ⚠️ 覆盖层是**静默生效**的（不改变任何调用契约）—— 若不主动报告，
+        用户会疑惑「prompt 为什么和上次不一样」、「我加的规则到底生效没」。
+        这是本项目反复强调的同一件事：**静默的机制比坏掉的机制更难查**。
+        """
+        ov = self.rules.overrides
+        if ov.is_empty() and not ov.unknown and not ov.problems:
+            return []
+        out: list[str] = []
+        act = ov.active()
+        if act:
+            out.append("🧩 本机覆盖生效 %d 项（`prompts/overrides/`）：%s"
+                       % (len(act), "、".join(o.rel for o in act)))
+        if ov.unknown:
+            out.append("⚠️ 覆盖层有 %d 个文件名不合约定、**未生效**：%s"
+                       "（约定 `<scope>.<target>.md`，"
+                       "scope=all|角色类名，target=negative|extra|layout）"
+                       % (len(ov.unknown), "、".join(ov.unknown)))
+        for p in ov.problems:
+            out.append(f"⚠️ 覆盖层问题：{p}")
+        return out
+
     # ── 产出核验（**图像层**）──
 
     def verify(self, asset_id: str) -> dict:
@@ -468,6 +494,7 @@ class DramaAssetAgent:
 
         card, notes = agent.complete(card, parsed, self.rules, self.llm)
         en, cn, neg = build_prompts(card, self.rules)
+        notes.extend(self._override_notes())
 
         rep = check_required(card, self.rules)
         rep.issues.extend(check_text_risk(en, neg).issues)

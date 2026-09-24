@@ -34,6 +34,8 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .overrides import Overrides
+
 # ─────────────────────────────────────────────────────────────
 # 权威文件清单（相对于工作流根）
 # ─────────────────────────────────────────────────────────────
@@ -176,8 +178,16 @@ class RuleSource:
         self.workflow_root = Path(workflow_root) if workflow_root else self._autodetect()
         self._cache: dict[str, object] = {}
         self.mode = "live" if self.workflow_root and self.workflow_root.is_dir() else "snapshot"
+        # ⭐ 本机覆盖层（`prompts/overrides/`）挂在这里 —— 于是**所有**读取规则的地方
+        #    都不必改签名就自动生效（见 `overrides.py` 的两条设计原则）。
+        self.overrides = Overrides(self._project_root())
         if self.mode == "snapshot":
             self._load_snapshot()
+
+    @staticmethod
+    def _project_root() -> Path:
+        """本项目根（`07-智能体运行时/`）= `src/` 的上一级。"""
+        return Path(__file__).resolve().parent.parent
 
     # ── 定位工作流根 ──
     def _autodetect(self) -> Path | None:
