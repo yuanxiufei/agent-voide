@@ -96,6 +96,8 @@ def cmd_ask(a: argparse.Namespace) -> int:
         ag.cfg.generate = False
     if a.provider:
         ag.cfg.provider = a.provider
+    if a.reference:
+        ag.cfg.reference_image = a.reference
     if a.type:
         ag.cfg.provider = ag.cfg.provider  # 类型由 route 层处理
 
@@ -260,10 +262,27 @@ def cmd_probe(a: argparse.Namespace) -> int:
     return cmd_ask(a)
 
 
+def _apply_gen_args(ag, a: argparse.Namespace) -> None:
+    """把出图相关命令行参数**真正应用到** agent。
+
+    ⚠️ 抽出来是因为踩过：`panorama` / `angles` / `batch` 三个命令都声明了
+    `--provider`，但**没有一个把它传下去** —— 用户以为切了 Provider，
+    实际仍是 config 里的 mock，而且**没有任何提示**。
+    「参数被接受但静默忽略」是比报错更难查的一类问题（本项目反复强调这点）。
+    """
+    if getattr(a, "no_image", False):
+        ag.cfg.generate = False
+    if getattr(a, "provider", None):
+        ag.cfg.provider = a.provider
+    if getattr(a, "reference", None):
+        ag.cfg.reference_image = a.reference
+
+
 def cmd_panorama(a: argparse.Namespace) -> int:
     """场景 360° 全景空间基准（工作流 §4.6「全景定基准 → 六角度出分镜可用图」）。"""
     text = " ".join(a.text)
     ag = DramaAssetAgent(AgentConfig.load(ROOT))
+    _apply_gen_args(ag, a)
     hr("🌐 场景 360° 全景基准（§4.6）")
     print(f"  输入：{text}")
     res = ag.panorama(text, generate=(not a.no_image))
@@ -308,8 +327,10 @@ def cmd_verify(a: argparse.Namespace) -> int:
 def cmd_angles(a: argparse.Namespace) -> int:
     """场景 S01–S06 六角度 + 场景资产库索引表（INDEX-TEMPLATES §4.1）。"""
     ag = DramaAssetAgent(AgentConfig.load(ROOT))
+    _apply_gen_args(ag, a)
     hr(f"🎬 场景多角度（§4.1）· {a.env_id}")
-    res = ag.angles(a.env_id, generate=(not a.no_image))
+    res = ag.angles(a.env_id, generate=(not a.no_image),
+                    reference=a.reference or "")
     if not res.get("ok"):
         print(f"  ❌ {res.get('error')}")
         return 2
@@ -333,6 +354,7 @@ def cmd_batch(a: argparse.Namespace) -> int:
     """批量生成（蓝图 §十八：一次生成 10 个废土 NPC）。"""
     text = " ".join(a.text)
     ag = DramaAssetAgent(AgentConfig.load(ROOT))
+    _apply_gen_args(ag, a)
     count = a.count or batch.parse_count(text)
     hr(f"📦 批量生成：{count} 项")
     print(f"  请求：{text}")
@@ -554,6 +576,9 @@ def build_parser() -> argparse.ArgumentParser:
                         help="覆盖 config.json 的图像 Provider")
         sp.add_argument("--type", choices=["character", "costume", "prop", "environment"],
                         help="强制资产类型（不自动判定）")
+        sp.add_argument("--reference", metavar="图路径",
+                        help="挂一张参考图做**图生图**（保形象/空间一致）。"
+                             "openai → /images/edits · stability → mode=image-to-image")
 
     q = sub.add_parser("ask", help="一句话创建/修改资产")
     q.add_argument("text", nargs="+")
@@ -576,6 +601,9 @@ def build_parser() -> argparse.ArgumentParser:
     ag_.add_argument("-v", "--verbose", action="store_true", help="逐角度打印提示词")
     ag_.add_argument("--no-image", action="store_true")
     ag_.add_argument("--provider", choices=["mock", "openai", "stability"])
+    ag_.add_argument("--reference", metavar="图路径",
+                     help="S02–S06 的基图（通常不必给 —— 默认自动用 S01 的出图）；"
+                          "⚠️ S01 **永远**是纯文字生成，不受此参数影响（§4.1 铁则①）")
 
     ba = sub.add_parser("batch", help="批量生成（蓝图 §十八：一次 10 个 NPC）")
     ba.add_argument("text", nargs="+")

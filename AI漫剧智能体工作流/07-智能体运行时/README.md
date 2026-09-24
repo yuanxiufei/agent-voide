@@ -107,7 +107,8 @@ AgentSpec(
 | 命令 | 作用 |
 |---|---|
 | `python main.py "一个30岁的废土女佣兵"` | 创建：解析 → 补全 → 中英提示词 → 出图 → 落库 |
-| `python main.py "把她的头发换成银白色"` | 修改：**只改指定项，指纹锁定不漂移** |
+| `python main.py "把她的头发换成银白色"` | 修改：**只改指定项，指纹锁定不漂移**（指代「她」按类型消解，不会误改到场景） |
+| `... --reference <图>` | 挂参考图做**图生图**（保形象一致），可用于任意生成 |
 | `python main.py batch "一次生成10个废土NPC"` | **批量生成**（蓝图 §十八）：自动配 ID + 出花名册 |
 | `python main.py panorama "<场景描述或 ENV_00X>"` | **场景 360° 全景空间基准**（§4.6） |
 | `python main.py angles <ENV_ID>` | **场景 S01–S06 六角度 + 场景资产库索引表**（§4.1） |
@@ -128,16 +129,31 @@ Gate / 指纹 / 版本 / 落盘，不会出现「批量生成的与单个生成�
 
 | 铁则 | 本项目的落实 |
 |---|---|
-| ① **必须先出 S01**（纯文字 prompt） | 先出 S01，其路径存为该场景的 reference |
-| ② **S02–S06 全部以 S01 为 reference_image**，追加 `same scene as reference` | 自动带上（S01 的 prompt 里**不含** reference 段） |
+| ① **必须先出 S01**（纯文字 prompt） | 先出 S01，其路径存为该场景的 reference；**S01 永远不带参考图**（带图就不是"基准"了）|
+| ② **S02–S06 全部以 S01 为 reference_image**，追加 `same scene as reference` | ✅ **真的挂图**：把 S01 的**图**传给 Provider 的图生图接口，不只是写进 prompt |
 | ③ 每张只写该视角**实际可见**的物品 | 提示词显式写「render ONLY what is visible from here」+ 该角度覆盖范围 |
 | ④ 材质词/颜色词从场景圣经**复制、不替换同义词** | 六个角度**复用同一个 SceneDNA**，从机制上保证用词一致 |
 
 并产出 §4.1 要求的那张**场景资产库索引表**（含分镜选图规则）——
 它不是文档装饰，而是机制的一部分。
 
-> ⚠️ **Provider 暂不支持 image-to-image**：reference 目前只写进 prompt（`same scene as reference` + S01 路径）。
-> 要真正把 S01 当图挂上去，需给 Provider 加参考图入参（**未实现/未实测**）。`angles` 命令会如实提示这一点。
+### ⭐ 参考图（image-to-image）已实现
+
+| Provider | 无参考图 | 有参考图 |
+|---|---|---|
+| `mock` | 占位图 | 把参考图**混入配色**并画左上白条 —— 使「参考图有没有真的传进来」**可用产物验证** |
+| `openai` | `POST /images/generations`（JSON） | `POST /images/edits`（multipart，字段 `image[]`） |
+| `stability` | `files={"none": ""}` | `mode=image-to-image` + `strength`（默认 0.55） + `image` 文件 |
+
+通用入口：**任何**生成都可以挂参考图（保形象/空间一致）：
+
+```bash
+python main.py "把她的眼睛换成琥珀色" --reference output/images/CHR_001/v001.png
+```
+
+> ⚠️ **参考图不存在时会明确报错**，不会静默降级成纯文字生成 ——
+> 「挂图失败被吞掉」的后果正是 §4.1 警告的「各角度独立从文字生成 → 空间必然漂移」，
+> 而用户会以为已按铁则执行。
 
 > ⭐ **用户不需要使用固定格式**（蓝图的核心立场，已落到实现）：
 > CLI 接受任意自然语言、任意顺序、中英混排 —— `"一个30岁的废土女佣兵"`
@@ -164,8 +180,11 @@ Gate / 指纹 / 版本 / 落盘，不会出现「批量生成的与单个生成�
 │   ├── rule_source.py       02 的规则来源层（只读工作流）
 │   ├── schema.py / nl_parser.py / prompt_engine.py / consistency.py
 │   ├── character_agent.py / prop_agent.py / costume_agent.py
+│   ├── overrides.py         本机覆盖层（`prompts/overrides/`）
 │   ├── image_provider.py / asset_manager.py / llm_client.py / agent.py
 │   └── __init__.py
+├── tests/
+│   └── test_providers.py   ⭐ 出图 Provider 的**离线合约测试**（本地桩服务器，无需 Key）
 ├── prompts/               本地覆盖目录（默认走工作流规则）
 ├── assets/ / output/      资产卡 / 生成物（均 gitignore 或运行态）
 └── examples/              **六份**样例资产卡（角色 / 服装 / 道具 / 场景 / 表情 / 动作）
@@ -201,6 +220,10 @@ cp .env.example .env      # 填入 Key（.env 已在 .gitignore）
 
 ## 八、当前边界（诚实说明）
 
+> ⚠️ **本表里的 ❌ 一律是"未实现/未实测"，不会假装能用。**
+> 没有验证过的能力写进"已实现"，比缺功能更糟 —— 用户会基于它做生产决定。
+> 本项目的判据是：**跑过、且产物能被检查**，才算已实现。
+
 | 项 | 状态 |
 |---|---|
 | 7 个 agent 的**装配 / 启动 / 路由 / 交接 / 门禁** | ✅ 已实现（通用，零依赖） |
@@ -212,6 +235,7 @@ cp .env.example .env      # 填入 Key（.env 已在 .gitignore）
 | **产出核验**（卡/提示词/图/索引表） | ✅ 已实现（`verify`）—— 只核验**客观可验证**项 |
 | **图像语义比对**（图与图是否同一角色/空间） | ❌ **未实现，且不建议硬做**（见下） |
 | `prompts/overrides/` 本机覆盖层 | ✅ 已实现（`<scope>.<target>.md`，见 `prompts/README.md`） |
+| **image-to-image 参考图**（`--reference` / 六角度铁则②） | ✅ 已实现，**29 项离线合约测试**（`tests/test_providers.py`，用本地桩服务器，**无需 Key**） |
 
 > ### ⚠️ 为什么 `verify` **不做**"图与图是否同一个人"的判定
 >

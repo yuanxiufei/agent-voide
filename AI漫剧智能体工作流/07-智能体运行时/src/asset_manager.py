@@ -32,6 +32,19 @@ TYPE_DIR = {"character": "characters", "costume": "costumes",
             "expression": "expressions", "pose": "poses"}
 
 
+def normalize_version(v: str) -> str:
+    """版本号统一为**三位**：`v1` / `1` / `v001` → `v001`。
+
+    ⚠️ 必须**在版本号被用到之前**调用（不只是 `save()` 里）。实测踩到：
+    `_maybe_generate()` 跑在 `save()` **之前**，于是出图存档成了
+    `output/images/CHR_001/**v1**.png`，而资产卡是 `v**001**.json`
+    —— 同一份资产两种编号，`--reference` 想指向旧图时会指空。
+    """
+    raw = v if str(v).startswith("v") else f"v{v}"
+    num = raw[1:]
+    return f"v{int(num):03d}" if num.isdigit() else raw
+
+
 def now_str() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -87,15 +100,29 @@ class AssetManager:
         self._save_registry()
         return aid
 
-    def resolve_id(self, token: str) -> str:
-        """把用户口头的指代解析成真实 ID：「上一个 / 她 / 它」→ 最近创建的资产。"""
+    def resolve_id(self, token: str, asset_type: str = "") -> str:
+        """把用户口头的指代解析成真实 ID：「上一个 / 她 / 它」→ 最近的**同类**资产。
+
+        ⚠️ **类型限定是刚需，不是优化**。原实现对所有指代（含空串）一律返回
+        「最近创建的资产」，于是库里同时有角色和场景时，
+        「把**她**的头发换成银白色」会改到**场景**上（实测踩到：改出了 ENV_001 v002）。
+
+        :param asset_type: 期望的资产类型（`character` / `costume` / …）；
+                           留空则不限类型（保持旧的"最近创建"语义）。
+                           人物代词「她 / 他」在未给类型时按 `character` 处理 ——
+                           因为指代一个人时，"某个场景"不是合理候选。
+        """
         t = (token or "").strip()
         if parse_id(t):
             return t
-        if t in ("previous", "上一", "上一个", "她", "他", "它", "") or not t:
-            issued = self.registry.get("issued", {})
-            if issued:
-                return list(issued)[-1]
+        issued = self.registry.get("issued", {})
+        if not issued:
+            return t
+        if t in ("previous", "上一", "上一个", "她", "他", "它", ""):
+            want = asset_type or ("character" if t in ("她", "他") else "")
+            ids = [k for k, v in issued.items()
+                   if not want or (v or {}).get("type") == want]
+            return ids[-1] if ids else list(issued)[-1]
         return t
 
     # ── 路径 ──
@@ -112,16 +139,13 @@ class AssetManager:
     def save(self, card: AssetCard) -> Path:
         """保存资产卡到 `vNNN.json` 并更新 `latest.json`。
 
-        ⚠️ 版本号**统一为三位**（`v1` → `v001`）——否则首次创建写出 `v1.json`、
-        修改写出 `v002.json`，同一目录里两种编号并存，排序与 glob 都会错乱。
-        `next_version()` 已产三位，故此处只做归一。
+        ⚠️ 版本号**统一为三位**（`v1` → `v001`）——否则同一目录里两种编号并存，
+        排序与 glob 都会错乱。见 `normalize_version()`。
         """
         card.updated_at = now_str()
         d = self.card_dir(card.id)
         d.mkdir(parents=True, exist_ok=True)
-        raw = card.version if card.version.startswith("v") else f"v{card.version}"
-        num = raw[1:]
-        ver = f"v{int(num):03d}" if num.isdigit() else raw
+        ver = normalize_version(card.version)
         card.version = ver
         blob = json.dumps(card.to_dict(), ensure_ascii=False, indent=2)
         (d / f"{ver}.json").write_text(blob, encoding="utf-8")
@@ -224,14 +248,25 @@ class AssetManager:
         return p
 
     def place_images(self, card: AssetCard, image_paths: list[str]) -> list[str]:
-        """把生成图移入 `output/images/<ID>/vNNN.png` 并更新 `latest.png`。"""
+        """把生成图移入 `output/images/<ID>/vNNN.png` 并更新 `latest.png`。
+
+        ⚠️ **同路径时必须跳过拷贝**：`_maybe_generate()` 传给出图 Provider 的
+        `out_path` 与这里的 `dst` 是**同一个路径**（都是
+        `output/images/<ID>/<版本>.png`），而 `shutil.copyfile(src, dst)` 在
+        src == dst 时抛 `SameFileError`。
+
+        实测后果很隐蔽：图**已经写出来了**，异常却被 `_maybe_generate` 吞成
+        `ok=False` → `images` 为空 → 「产出图像」整段不打印 → 看起来像"没出图"。
+        （这个 bug 一直存在，直到新加的「出图失败要报错」机制把它照出来。）
+        """
         d = self.output_dir / "images" / card.id
         d.mkdir(parents=True, exist_ok=True)
         final = []
         for i, src in enumerate(image_paths):
             suffix = "" if len(image_paths) == 1 else f"_{i + 1}"
             dst = d / f"{card.version}{suffix}.png"
-            shutil.copyfile(src, dst)
+            if os.path.abspath(str(src)) != os.path.abspath(str(dst)):
+                shutil.copyfile(src, dst)
             final.append(str(dst))
         if final:
             shutil.copyfile(final[0], d / "latest.png")

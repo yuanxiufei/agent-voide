@@ -94,6 +94,9 @@ class AgentConfig:
     id_style: str = "project"
     workflow_root: str = ""
     generate: bool = True
+    # 显式参考图（`--reference`）：任意生成都能挂一张基图做图生图。
+    # 六角度的铁则②会自动设它，这里是给用户的通用入口。
+    reference_image: str = ""
 
     @classmethod
     def load(cls, root: str | Path) -> "AgentConfig":
@@ -186,6 +189,7 @@ class DramaAssetAgent:
         en, cn, neg = build_prompts(card, self.rules)
         rep = check_required(card, self.rules)
         result = self._maybe_generate(card, generate)
+        notes.extend(self._gen_note(result))
         path = self.am.save(card)
         pr = self.am.write_prompt(card)
         md = self.am.write_metadata(card, result)
@@ -312,7 +316,8 @@ class DramaAssetAgent:
 
     # ── 场景六角度（`模板/INDEX-TEMPLATES.md` §4.1）──
 
-    def angles(self, env_id: str, *, generate: bool | None = None) -> dict:
+    def angles(self, env_id: str, *, generate: bool | None = None,
+               reference: str = "") -> dict:
         """出场景的 **S01–S06 六角度**，并产出 §4.1 要求的**场景资产库索引表**。
 
         ⚠️ 原文明确：「**不建此表 → 各角度独立从文字生成 → 空间必然漂移**」——
@@ -358,9 +363,18 @@ class DramaAssetAgent:
             if prov is not None:
                 try:
                     out = self.root / "output" / "images" / f"{card.id}_angles" / f"{no}.png"
+                    # ⭐ 铁则②的**真正落实**：S02–S06 把 S01 的**图**传给接口
+                    #    （`reference=ref`），而不是只把路径写进提示词。
+                    #    S01 自己渲染时 `ref` 仍为空串 → 自动不带参考图（铁则①：
+                    #    S01 必须是**纯文字** prompt，带参考图就不是"基准"了）。
+                    # ⚠️ S01 **永远**不带参考图（铁则①：它必须是纯文字基准），
+                    #    故必须显式判 S01 —— 不能写成 `ref or reference`，
+                    #    否则用户传了 `--reference` 时 S01 也会被挂图，"基准"就不成立了。
+                    base = "" if no.upper() == "S01" else (ref or reference)
                     paths = prov.generate(prompt=en, negative_prompt=neg,
                                           width=self.cfg.width, height=self.cfg.height,
-                                          out_path=str(out))
+                                          out_path=str(out),
+                                          reference=base or None)
                     img = str(paths[0]) if paths else ""
                 except Exception as e:                               # noqa: BLE001
                     img = f"（出图失败：{str(e)[:60]}）"
@@ -377,12 +391,26 @@ class DramaAssetAgent:
         if prov is None:
             notes.append("未出图（--no-image 或 config 关闭）—— 提示词与索引表已产出")
         elif not ref:
-            notes.append("⚠️ S01 未成功出图 → S02–S06 **没有参考图可挂**（铁则 ② 要求以 S01 为 reference）")
+            if reference:
+                notes.append(f"⚠️ S01 未出图 → 改用**用户提供**的参考图作为 "
+                             f"S02–S06 的基图：{reference}（注意：这张不是本场景的纯文字基准，"
+                             f"空间一致性由它决定）")
+            else:
+                notes.append("⚠️ S01 未成功出图 → S02–S06 **没有参考图可挂**"
+                             "（铁则 ② 要求以 S01 为 reference_image）；"
+                             "可用 `--reference <已有图>` 兜底")
         if ref:
-            notes.append(f"✅ S01 已出图，S02–S06 的 prompt 已带上 reference 段：{ref}")
-        notes.append("⚠️ **Provider 暂不支持 image-to-image**：reference 只写进了 prompt"
-                     "（`same scene as reference` + S01 路径）。要真正挂参考图，"
-                     "需给 Provider 加参考图入参（未实现/未实测）")
+            notes.append(f"✅ S01 已出图（{ref}）—— S02–S06 已把它的**图**传给接口，"
+                         f"**不只是**把路径写进 prompt")
+            if self.cfg.provider == "mock":
+                notes.append("ℹ️ mock 不做真实图生图：它把参考图**混入配色并画左上白条**，"
+                             "使「参考图是否真的传进来了」可用产物验证 "
+                             "（同 prompt 有无参考图 → 两张图像素不同）。"
+                             "真实图生图请用 openai / stability")
+            else:
+                notes.append(f"✅ **已真正挂图**（provider={self.cfg.provider}）："
+                             f"openai 走 `/images/edits` · "
+                             f"stability 走 `mode=image-to-image`")
         if not pano_url:
             notes.append("建议先出 `panorama`（§4.6 全景基准），六角度以它为空间参照")
 
@@ -500,6 +528,7 @@ class DramaAssetAgent:
         rep.issues.extend(check_text_risk(en, neg).issues)
 
         result = self._maybe_generate(card, generate)
+        notes.extend(self._gen_note(result))
         path = self.am.save(card)
         p = self.am.write_prompt(card)
         m = self.am.write_metadata(card, result)
@@ -516,7 +545,10 @@ class DramaAssetAgent:
     # ── 修改 ──
 
     def _modify(self, r, parsed, generate) -> dict:
-        aid = self.am.resolve_id(r.target_asset or parsed.target_asset)
+        # ⚠️ 带上 `asset_type` 限定 —— 否则「把她头发换成银白」在库里同时有
+        #    场景时会改到场景上（见 `resolve_id` 的说明）
+        aid = self.am.resolve_id(r.target_asset or parsed.target_asset,
+                                 asset_type=r.asset_type)
         old = self.am.load(aid)
         if old is None:
             return {"operation": "modify", "ok": False,
@@ -543,8 +575,22 @@ class DramaAssetAgent:
         p = self.am.write_prompt(new)
         m = self.am.write_metadata(new, result)
 
+        # ⚠️ 修改路径原本**没有 notes 字段** —— 于是出图失败、本机覆盖生效
+        #    这类"必须说出来"的信息全被丢掉（实测：给了错的 --reference，
+        #    输出里一个字都没提）。补上。
+        notes = self._gen_note(result) + self._override_notes()
+        if self.cfg.reference_image and getattr(result, "ok", False):
+            notes.append(f"🖼️ 本次挂了参考图做图生图：{self.cfg.reference_image}")
+        # ⚠️ 防呆：改错对象时**说出来**。`resolve_id` 在该类型下无资产时会退回
+        #    "最近创建的资产" —— 那可能是个场景/道具，于是一句"换发色"改到了不相干的东西上。
+        if r.asset_type and old.type != r.asset_type:
+            notes.append(f"⚠️ 本次改的是 {old.id}（**{old.type}**），"
+                         f"但按措辞判定应为 `{r.asset_type}` —— "
+                         f"库里似乎没有该类型的资产，请确认改对了对象")
+
         return {
             "operation": "modify", "ok": True, "asset_id": aid,
+            "notes": notes,
             "from_version": old.version, "version": new.version,
             "changes": changes, "route": r.to_dict(),
             "diff": self.am.diff_versions(aid, old.version, new.version),
@@ -662,12 +708,19 @@ class DramaAssetAgent:
             return GenerationResult(asset_id=card.id, version=card.version,
                                     provider="(skipped)", model="", ok=True)
         t0 = time.time()
+        # ⚠️ **先归一版本号**，再拿它拼路径 —— `_maybe_generate` 跑在 `save()` 之前，
+        #    若此处不归一，图会存成 `v1.png` 而卡是 `v001.json`（实测踩到，
+        #    后果是 `--reference` 指向旧图时**永远指空**）。所有生成路径都汇到这里，
+        #    故这是唯一收口点。
+        from .asset_manager import normalize_version
+        card.version = normalize_version(card.version)
         prov = get_provider(self.cfg.provider, self.cfg.image_cfg)
         out_dir = self.root / "output" / "images" / card.id / f"{card.version}.png"
         try:
             paths = prov.generate(prompt=card.prompt_en, negative_prompt=card.negative_prompt,
                                   width=self.cfg.width, height=self.cfg.height,
-                                  out_path=str(out_dir))
+                                  out_path=str(out_dir),
+                                  reference=self.cfg.reference_image or None)
             final = self.am.place_images(card, paths)
             return GenerationResult(
                 asset_id=card.id, version=card.version, provider=prov.name,
@@ -679,6 +732,21 @@ class DramaAssetAgent:
                 asset_id=card.id, version=card.version, provider=prov.name,
                 model=getattr(prov, "model", prov.name), ok=False, error=str(e),
                 duration_ms=int((time.time() - t0) * 1000))
+
+    # ── 出图失败的可见性 ──
+
+    @staticmethod
+    def _gen_note(result) -> list[str]:
+        """出图失败必须**说出原因**。
+
+        ⚠️ 实测踩到：`--reference` 给了不存在的路径 → 资产卡照常创建、图没有、
+        输出里**一个字都没提**。用户只会以为"图还没好"，而真相是
+        "参考图路径错了"，两者处理方式完全不同。这是本项目最怕的**静默失败**。
+        """
+        if getattr(result, "ok", True):
+            return []
+        return [f"❌ **出图失败**（provider={getattr(result, 'provider', '?')}）："
+                f"{getattr(result, 'error', '（无错误信息）')}"]
 
     # ── 自检 ──
 

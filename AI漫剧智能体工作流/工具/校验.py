@@ -646,6 +646,27 @@ MECHANISM_RULES = [
         "keyword": "一致性段仍取工作流",
         "must_in": ["07-智能体运行时/prompts/README.md"],
     },
+    # ── 参考图 / 图生图（2026-09-24：§4.1 铁则②从"只写提示词"落实为"真的挂图"）──
+    {
+        "name": "07 运行时：铁则②**真的挂图**（不只是写进 prompt）",
+        "keyword": "把 S01 的**图**传给 Provider 的图生图接口",
+        "must_in": ["07-智能体运行时/README.md"],
+    },
+    {
+        "name": "07 运行时：S01 永远纯文字（铁则①不被 --reference 破坏）",
+        "keyword": "S01 永远不带参考图",
+        "must_in": ["07-智能体运行时/README.md"],
+    },
+    {
+        "name": "07 运行时：参考图缺失要报错（不静默降级）",
+        "keyword": "参考图不存在时会明确报错",
+        "must_in": ["07-智能体运行时/README.md"],
+    },
+    {
+        "name": "07 运行时：Provider 有**离线**合约测试（无需 Key 也能验）",
+        "keyword": "29 项离线合约测试",
+        "must_in": ["07-智能体运行时/README.md"],
+    },
 ]
 
 # 禁用前缀：pattern 命中即失败，除豁免文件外

@@ -92,11 +92,31 @@ class ImageProvider(ABC):
     @abstractmethod
     def generate(self, *, prompt: str, negative_prompt: str = "",
                  width: int = 1024, height: int = 1024,
-                 out_path: str = "", n: int = 1) -> list[str]:
+                 out_path: str = "", n: int = 1,
+                 reference: str | None = None) -> list[str]:
         ...
 
     def info(self) -> ProviderInfo:
         return ProviderInfo(self.name, True)
+
+
+def resolve_reference(reference: str | None) -> tuple[str, str]:
+    """校验参考图，返回 `(绝对路径, 问题描述)`；无参考图时返回 `("", "")`。
+
+    ⚠️ **参考图不存在时必须报错，不能静默降级成纯文字生成** ——
+    工作流 §4.1 的警告正是「各角度独立从文字生成 → **空间必然漂移**」。
+    若我们把"挂图失败"悄悄吞掉，用户会拿到六张各自为政的图却以为已按铁则执行
+    —— 这是本项目反复强调的那类失败：**静默比报错更难查**。
+    """
+    if not reference:
+        return "", ""
+    p = os.path.abspath(reference)
+    if not os.path.isfile(p):
+        return "", (f"参考图不存在：{reference} —— 铁则②要求以基图为 reference_image，"
+                    f"缺失时空间/形象会漂移；请先渲染基图，或显式接受无参考图")
+    if png_size(p) == (None, None):
+        return "", f"参考图不是可读的 PNG：{reference}"
+    return p, ""
 
 
 class MockProvider(ImageProvider):
@@ -118,8 +138,18 @@ class MockProvider(ImageProvider):
 
     def generate(self, *, prompt: str, negative_prompt: str = "",
                  width: int = 1024, height: int = 1024,
-                 out_path: str = "", n: int = 1) -> list[str]:
-        seed = hashlib.sha256((prompt + negative_prompt).encode("utf-8")).digest()
+                 out_path: str = "", n: int = 1,
+                 reference: str | None = None) -> list[str]:
+        ref_path, prob = resolve_reference(reference)
+        if prob:
+            raise FileNotFoundError(prob)
+        # ⭐ 参考图**参与配色**：于是"参考图是否真的传进来了"可以**用产物验证**
+        #    （同一个 prompt、有/无参考图 → 两张图像素不同）。不这么做的话，
+        #    mock 下的参考图只存在于注释里，等于没测。
+        ref_fp = hashlib.sha256(open(ref_path, "rb").read()).hexdigest()[:16] \
+            if ref_path else ""
+        seed = hashlib.sha256(
+            (prompt + negative_prompt + ref_fp).encode("utf-8")).digest()
         base = (seed[0], seed[1], seed[2])
         accent = (seed[3], seed[4], seed[5])
         gray = bytes((245, 245, 245))
@@ -163,6 +193,10 @@ class MockProvider(ImageProvider):
                 row = bytearray(row_cache[sy])
             for cx in (split_x,) + thirds_x:
                 row[cx * 3:cx * 3 + 3] = gray
+            if ref_path and 6 <= y < 6 + max(3, height // 12):
+                # ⭐ 参考图标记带（左上白条）—— 一眼可辨"这张是挂了参考图的"。
+                #    与"配色参与"一起，使参考图链路**可被产物证明**。
+                row[6 * 3:(width // 5) * 3] = bytes((255, 255, 255)) * (width // 5 - 6)
             raw.append(0)                              # filter type
             raw += row
 
@@ -181,7 +215,8 @@ class MockProvider(ImageProvider):
 
     def info(self) -> ProviderInfo:
         return ProviderInfo(self.name, True,
-                            "零依赖占位图（不调网络，用于验证流水线）", needs_key=False)
+                            "零依赖占位图（不调网络，用于验证流水线；支持参考图）",
+                            needs_key=False)
 
 
 class OpenAICompatProvider(ImageProvider):
@@ -197,7 +232,8 @@ class OpenAICompatProvider(ImageProvider):
 
     def generate(self, *, prompt: str, negative_prompt: str = "",
                  width: int = 1024, height: int = 1024,
-                 out_path: str = "", n: int = 1) -> list[str]:
+                 out_path: str = "", n: int = 1,
+                 reference: str | None = None) -> list[str]:
         if not self.api_key:
             raise RuntimeError("缺少 API Key：请设置环境变量 IMAGE_API_KEY")
         try:
@@ -205,17 +241,43 @@ class OpenAICompatProvider(ImageProvider):
         except ImportError as e:
             raise RuntimeError("需要 requests：pip install requests") from e
 
+        ref, prob = resolve_reference(reference)
+        if prob:
+            raise FileNotFoundError(prob)
+
         full = prompt
         if negative_prompt:
             # 部分兼容网关不认 negative 字段 → 併入正文，保证约束不丢
             full = f"{prompt}\n\nAvoid: {negative_prompt}"
-        resp = requests.post(
-            f"{self.base_url}/images/generations",
-            headers={"Authorization": f"Bearer {self.api_key}",
-                     "Content-Type": "application/json"},
-            json={"model": self.model, "prompt": full,
-                  "size": f"{width}x{height}", "n": n},
-            timeout=self.cfg.get("timeout", 300))
+
+        if ref:
+            # ⭐ 参考图走**真实的图生图接口**：`POST /images/edits`（multipart）。
+            #    ⚠️ 不手写 Content-Type —— requests 传 `files=` 时会自己带 boundary，
+            #    手动设置反而会破坏 multipart 解析。
+            #    ⚠️ 字段名各网关不一（OpenAI gpt-image-1 用 `image[]`，
+            #    dall-e-2 用 `image`）→ 可配置，默认取当前合约。
+            field = self.cfg.get("reference_field", "image[]")
+            with open(ref, "rb") as fh:
+                blob = fh.read()
+            data = {"model": self.model, "prompt": full,
+                    "size": f"{width}x{height}", "n": str(n)}
+            for k in ("input_fidelity", "strength"):
+                if self.cfg.get(k):
+                    data[k] = str(self.cfg[k])
+            resp = requests.post(
+                f"{self.base_url}{self.cfg.get('edit_path', '/images/edits')}",
+                headers={"Authorization": f"Bearer {self.api_key}"},
+                files={field: (os.path.basename(ref), blob, "image/png")},
+                data=data,
+                timeout=self.cfg.get("timeout", 300))
+        else:
+            resp = requests.post(
+                f"{self.base_url}/images/generations",
+                headers={"Authorization": f"Bearer {self.api_key}",
+                         "Content-Type": "application/json"},
+                json={"model": self.model, "prompt": full,
+                      "size": f"{width}x{height}", "n": n},
+                timeout=self.cfg.get("timeout", 300))
         resp.raise_for_status()
         data = resp.json()
 
@@ -240,7 +302,8 @@ class OpenAICompatProvider(ImageProvider):
     def info(self) -> ProviderInfo:
         if not self.api_key:
             return ProviderInfo(self.name, False, "未设置 IMAGE_API_KEY")
-        return ProviderInfo(self.name, True, f"{self.base_url} · {self.model}")
+        return ProviderInfo(self.name, True,
+                            f"{self.base_url} · {self.model}（参考图 → /images/edits）")
 
 
 class StabilityProvider(ImageProvider):
@@ -254,13 +317,31 @@ class StabilityProvider(ImageProvider):
 
     def generate(self, *, prompt: str, negative_prompt: str = "",
                  width: int = 1024, height: int = 1024,
-                 out_path: str = "", n: int = 1) -> list[str]:
+                 out_path: str = "", n: int = 1,
+                 reference: str | None = None) -> list[str]:
         if not self.api_key:
             raise RuntimeError("缺少 API Key：请设置环境变量 IMAGE_API_KEY")
         try:
             import requests
         except ImportError as e:
             raise RuntimeError("需要 requests：pip install requests") from e
+        ref, prob = resolve_reference(reference)
+        if prob:
+            raise FileNotFoundError(prob)
+
+        data = {"prompt": prompt, "negative_prompt": negative_prompt,
+                "aspect_ratio": _closest_aspect(width, height),
+                "output_format": "png"}
+        if ref:
+            # ⭐ 图生图：Stability 的 `mode=image-to-image` 需**同时**给 image 文件与 strength。
+            #    strength 越低越贴原图（生图端不像提示词端，无法"追加一句话"就保持一致）。
+            data["mode"] = "image-to-image"
+            data["strength"] = str(self.cfg.get("strength", 0.55))
+            with open(ref, "rb") as fh:
+                files = {"image": (os.path.basename(ref), fh.read(), "image/png")}
+        else:
+            files = {"none": ""}          # Stability 约定：纯文字生成时占位
+
         paths = []
         for i in range(max(1, n)):
             p = out_path if n == 1 else f"{os.path.splitext(out_path)[0]}_{i + 1}.png"
@@ -269,10 +350,8 @@ class StabilityProvider(ImageProvider):
                 f"{self.base_url}/v2beta/stable-image/generate/{self.model}",
                 headers={"Authorization": f"Bearer {self.api_key}",
                          "Accept": "image/*"},
-                files={"none": ""},
-                data={"prompt": prompt, "negative_prompt": negative_prompt,
-                      "aspect_ratio": _closest_aspect(width, height),
-                      "output_format": "png"},
+                files=files,
+                data=data,
                 timeout=self.cfg.get("timeout", 300))
             resp.raise_for_status()
             with open(p, "wb") as f:
@@ -283,7 +362,10 @@ class StabilityProvider(ImageProvider):
     def info(self) -> ProviderInfo:
         if not self.api_key:
             return ProviderInfo(self.name, False, "未设置 IMAGE_API_KEY")
-        return ProviderInfo(self.name, True, f"{self.base_url} · {self.model}")
+        return ProviderInfo(self.name, True,
+                            f"{self.base_url} · {self.model}"
+                            f"（参考图 → mode=image-to-image，"
+                            f"strength={self.cfg.get('strength', 0.55)}）")
 
 
 def _closest_aspect(w: int, h: int) -> str:
