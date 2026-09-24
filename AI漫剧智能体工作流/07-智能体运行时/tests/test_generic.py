@@ -27,6 +27,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src import generic as g                                  # noqa: E402
+from src import nl_parser as nlp                              # noqa: E402
 
 PASS, FAIL = [], []
 
@@ -139,6 +140,64 @@ def _run(tmp: Path) -> int:
         bad = [k for k, v in tbl.items()
                if k.endswith("_en") and any("\u4e00" <= c <= "\u9fa5" for c in v)]
         check(f"{name} 的 `*_en` 值全为英文", not bad, str(bad))
+
+    print()
+    print("── ⑧ `world` 必须是**自由文本**，不是 11 个枚举值 ──")
+    check("表内题材仍返回题材键", nlp._find_world("一个30岁的废土女佣兵") == "wasteland")
+    check("⭐ 表外题材回退到**时代词**作为自由文本 world",
+          nlp._find_world("民国谍战剧，一位穿旗袍的女特工") == "民国",
+          nlp._find_world("民国谍战剧，一位穿旗袍的女特工"))
+    check("没有题材词/时代词时返回空（不编）",
+          nlp._find_world("一个女佣兵") in ("", "military"),
+          nlp._find_world("一个女佣兵"))
+    p = nlp.parse("民国谍战剧，一位穿旗袍的女特工")
+    check("⭐ 资产名**不再含「-未定」**（那串会污染名字）",
+          "未定" not in (p.name or "") and p.name == "女特工-民国", p.name)
+
+    print()
+    print("── ⑨ 批量：**用户给的清单优先于题材池**（generality 的最直接入口）──")
+    import src.batch as bt
+    got = bt.user_items("一次生成4个民国谍战人物：报务员、线人、舞女、巡捕")
+    check("从「：」后抽出用户清单（按标点结构，不靠词表）",
+          got == ["报务员", "线人", "舞女", "巡捕"], str(got))
+    check("没有「：」清单时返回空（不臆造）",
+          bt.user_items("一次生成10个废土NPC") == [])
+    items, notes = bt.plan("一次生成4个民国谍战人物：报务员、线人、舞女、巡捕",
+                           asset_type="character", world="民国")
+    labels = [i["label"].split("·")[-1].strip() for i in items]
+    check("⭐ 展开用的是**用户给的**身份", labels == got, str(labels))
+    check("⭐ 生成文本**不含**那块「：清单」（它是规格不是内容）",
+          all("：" not in i["text"] and "报务员、线人" not in i["text"]
+              for i in items), items[0]["text"])
+    check("说明里明确写出「取你给的清单」",
+          any("你给的清单" in n for n in notes), str(notes))
+
+    print()
+    print("── ⑩ 批量：未命中题材池 → 通用骨架 + **明说**（不静默）──")
+    pool, matched = bt.pool_for("民国")
+    check("未命中题材池 → matched=False", not matched)
+    check("默认身份是**社会身份**而非叙事标签（不含「主角/路人甲」）",
+          not ({"主角", "伙伴", "对手", "导师", "路人甲"} & set(pool["jobs"])),
+          str(pool["jobs"]))
+    _it, nt = bt.plan("一次生成4个民国谍战NPC", asset_type="character",
+                      world="民国")
+    check("⭐ 未命中时**必须说明**（这是唯一的可见信号）",
+          any("未命中题材池" in n for n in nt), str(nt))
+    _it2, nt2 = bt.plan("一次生成4个废土NPC", asset_type="character",
+                        world="wasteland")
+    check("表内题材**命中** → 身份用该题材的具体值，且不报「未命中」",
+          not any("未命中" in n for n in nt2), str(nt2))
+
+    print()
+    print("── ⑪ 场景 / 道具池也不得写死成某一题材 ──")
+    check("道具池按题材分组（有 default 之外的键）",
+          len(bt.PROP_POOLS) > 1 and "default" in bt.PROP_POOLS)
+    check("场景池同上", len(bt.SCENE_POOLS) > 1 and "default" in bt.SCENE_POOLS)
+    ws, wm = bt._typed_pool(bt.PROP_POOLS, "wasteland")
+    ds, dm = bt._typed_pool(bt.PROP_POOLS, "民国")
+    check("废土命中 → 用**具体**道具（能源步枪…）", wm and "能源步枪" in ws, str(ws[:3]))
+    check("表外题材 → 用**题材无关类目**，且不报「能源步枪」",
+          (not dm) and "能源步枪" not in ds, str(ds[:3]))
 
     print()
     print("=" * 66)

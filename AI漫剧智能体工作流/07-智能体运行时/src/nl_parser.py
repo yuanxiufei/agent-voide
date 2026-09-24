@@ -143,12 +143,28 @@ def _find_gender(text: str) -> str:
 
 
 def _find_world(text: str) -> str:
+    """题材 / 世界观 —— **自由文本，不是 11 个枚举值之一**。
+
+    ⚠️ 原实现只返回 `WORLD_STYLES` 的 11 个键之一，**未命中即空串**。
+    实测后果（「任何一部小说都行」这条要求下的硬伤）：
+      · 「民国谍战剧」→ `world=""` → 资产名被拼成「主角-**未定**」
+        （批量产出 10 个「×-未定」）；
+      · `WORLD_RENDER` 落默认值，题材渲染段丢失。
+
+    ⭐ 现改为两级：
+      ① **命中 11 个题材键** → 返回键（它们有专门的预设与渲染，最具体）；
+      ② **未命中** → 回退到**时代词**（如「民国」「清朝」「未来」）作为自由文本
+         —— 于是 world 能表达**任意**作品的年代/题材，不再只有 11 种说法。
+    """
     best, blen = "", 0
     for style, kws in WORLD_STYLES.items():
         for kw in kws:
             if kw in text and len(kw) > blen:
                 best, blen = style, len(kw)
-    return best
+    if best:
+        return best
+    from .generic import era_from_text
+    return era_from_text(text)[0]
 
 
 def _find_occupation(text: str) -> str:
@@ -337,7 +353,10 @@ def parse(text: str, default_type: str = "") -> ParsedInput:
     p.occupation = _find_occupation(text)
     p.world = _find_world(text)
     if p.asset_type == "character":
-        p.name = f"{p.occupation or '角色'}-{p.world or '未定'}"
+        # ⚠️ `world` 为空时**不要拼「-未定」**：那串本意是"让人看见没识别出题材"，
+        #    代价却是**污染资产名**（实测批量产出 10 个「主角-未定」「店主-未定」）。
+        #    "没识别出题材"这个事实由 `world=""` 本身 + 报告承担，不必写进名字。
+        p.name = f"{p.occupation}-{p.world}" if p.world else (p.occupation or "")
 
     p.hair_hints = [h for h in HAIR_WORDS if h in text] + \
         [f"{c}发" for c in COLORS if f"{c}发" in text]

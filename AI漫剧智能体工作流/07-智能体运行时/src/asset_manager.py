@@ -128,7 +128,25 @@ class AssetManager:
     # ── 路径 ──
 
     def card_dir(self, asset_id: str) -> Path:
-        t, _ = parse_id(asset_id) or ("character", 0)
+        """资产卡所在目录。
+
+        ⚠️ **不能只靠 `parse_id()` 推类型** —— 实测：它对两种 ID 模板
+          · `EXP_<角色ID>_<表情名>`（如 `EXP_CHR001_基线16式`）
+          · `POS_<3位>_<动作名>`（如 `POS_001_基础18动作`）
+        **返回 `None`**，于是这里回退成 `character` → 表情集/动作集卡被写进
+        `assets/characters/`，而 `assets/expressions/`、`assets/poses/`
+        **永远是空的**（`TYPE_DIR` 里那两项形同虚设）。
+        后果：按类型找资产的人（`list` / 人工翻目录 / 下游模块）找不到表情集。
+
+        注册表里**每个已分配的 ID 都记了 `type`**，那才是准确来源；
+        `parse_id()` 只作为注册表缺失时的兜底。
+        """
+        issued = self.registry.get("issued", {}) or {}
+        rec = issued.get(asset_id)
+        if isinstance(rec, dict) and rec.get("type"):
+            t = rec["type"]
+        else:
+            t = (parse_id(asset_id) or ("character", 0))[0]
         return self.assets_dir / TYPE_DIR.get(t, "characters") / asset_id
 
     def card_path(self, asset_id: str, version: str = "latest") -> Path:

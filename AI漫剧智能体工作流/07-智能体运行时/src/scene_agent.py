@@ -421,7 +421,11 @@ def _fill(card: AssetCard, parsed) -> list[str]:
         notes.insert(0, "✅ 已按**你的原话**填场景：" + "、".join(
             f"{k}={v}" for k, v in hit.items() if not k.endswith("_en") and v))
 
-    notes.append(f"场景类型：{sd.name or preset['name']}")
+    # ⚠️ 不能写 `sd.name` —— `SceneDNA` **没有** `name` 字段（只有 `name_en`）。
+    #    我（接线通用补全层时）写成 `sd.name or preset['name']`，于是**场景创建直接崩**
+    #    （AttributeError），而且逃过了那轮的端到端测试 —— 因为当时只跑了服装/道具，
+    #    **没跑场景**。故本轮补了场景用例（`tests/test_generic.py` 第 ⑥ 段）。
+    notes.append(f"场景类型：{hit.get('name') or preset['name']}")
     notes.append("必须生成要素 11 项已补齐（建筑/空间/材料/光线/氛围/时代/动线/前中后景/风格）")
     notes.append(f"多角度锁定 {len(sd.locked_elements)} 项 · 允许变化 {len(sd.variable_elements)} 项")
     if sd.primary_color:

@@ -464,12 +464,15 @@ class DramaAssetAgent:
     # ── 批量（蓝图 §十八）──
 
     def plan_batch(self, text: str, *, count: int = 0, asset_type: str = ""
-                   ) -> tuple[str, list[dict]]:
-        """规划一次批量：返回 `(asset_type, 展开后的 N 条请求)`。
+                   ) -> tuple[str, list[dict], list[str]]:
+        """规划一次批量：返回 `(asset_type, 展开后的 N 条请求, 说明)`。
 
         ⭐ 单独提出来，是为了让 **CLI 预览**与**实际执行**用**同一份规划** ——
-        否则「预览里是主角/伙伴，实际生成的是拾荒者/商队护卫」这种不一致，
+        否则「预览里是主事者/手艺人，实际生成的是拾荒者/商队护卫」这种不一致，
         用户根本没法判断哪边对（实测踩到：预览没传世界观，落到了通用池）。
+
+        ⚠️ 说明（notes）**必须一起返回**：未命中题材池时它是**唯一的可见信号**
+        （否则用户看到通用身份，不知道那是兜底，也就无从修正）。
         """
         if not asset_type:
             r0, p0 = route(text, self.llm, "")
@@ -478,8 +481,9 @@ class DramaAssetAgent:
         else:
             _, p0 = route(text, self.llm, asset_type)
             world = p0.world or ""
-        return asset_type, batch_mod.plan(text, count=count,
-                                          asset_type=asset_type, world=world)
+        items, notes = batch_mod.plan(text, count=count,
+                                      asset_type=asset_type, world=world)
+        return asset_type, items, notes
 
     def batch(self, text: str, *, count: int = 0, asset_type: str = "",
               generate: bool | None = None) -> dict:
@@ -489,8 +493,8 @@ class DramaAssetAgent:
         `handle()`** —— 于是每一项都自动获得同一套 Gate / 指纹 / 版本 / 落盘，
         不会出现「批量生成的与单个生成的不一样」这种最难查的偏差。
         """
-        asset_type, items = self.plan_batch(text, count=count,
-                                            asset_type=asset_type)
+        asset_type, items, plan_notes = self.plan_batch(text, count=count,
+                                                        asset_type=asset_type)
         results: list[dict] = []
         for it in items:
             try:
@@ -512,6 +516,7 @@ class DramaAssetAgent:
             })
         return {"operation": "batch", "asset_type": asset_type,
                 "count": len(results), "items": results,
+                "plan_notes": plan_notes,
                 "roster": batch_mod.roster(results)}
 
     # ── 创建 ──

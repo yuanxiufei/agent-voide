@@ -19,7 +19,10 @@
 
 from __future__ import annotations
 
+import gzip
+import json
 import re
+from pathlib import Path
 
 from .schema import AssetCard
 
@@ -73,6 +76,18 @@ ZH2EN: dict[str, str] = {
     "麻": "linen", "棉麻": "cotton-linen", "帆布": "canvas", "锦": "brocade",
     "皮": "leather", "革": "leather", "金属": "metal", "铁": "iron",
     "钢": "steel", "银": "silver", "塑料": "plastic", "纸质": "paper",
+    # ── 时代/年代词（`_find_world` 的回退会用它们当自由文本 world）──
+    # ⚠️ 必须与 `generic.ERA_WORDS` 的**中文侧逐字一致** —— 否则
+    #    `world="民国"` 经 `tr()` 译不出，英文 prompt 会**静默省略**该词
+    #    （`_en_safe()` 弃中文不弃语义，但信息确实丢了）。
+    "民国": "the Republican era (early 20th c. China)",
+    "清末": "late Qing dynasty", "清朝": "Qing dynasty",
+    "明朝": "Ming dynasty", "明代": "Ming dynasty",
+    "宋代": "Song dynasty", "唐朝": "Tang dynasty",
+    "古代": "pre-modern", "上古": "ancient times",
+    "未来": "the future", "近未来": "the near future",
+    "当代": "contemporary", "现代": "modern day",
+    "末法": "a declining age", "末日": "post-apocalypse",
     # ── 场所后缀补充（`prep_place` 用）──
     "洋行": "foreign firm", "当铺": "pawnshop", "客栈": "inn",
     "衙门": "yamen", "书院": "academy", "驿站": "post station",
@@ -112,14 +127,116 @@ OCCUPATION_EN = {
 
 
 def tr(text: str) -> str:
-    """中英混排片段里能翻的词翻成英文；翻不了的原样保留（不丢信息）。"""
+    """中英混排片段里能翻的词翻成英文；翻不了的原样保留（不丢信息）。
+
+    ⭐ **两层词表**（2026-09-24 起，见 `工具/生成词库.py`）：
+
+    | 层 | 来源 | 作用 | 谁优先 |
+    |---|---|---|---|
+    | ① 内置 | `ZH2EN`（手工 168 条 + 职业 43 条） | **为 prompt 精心调过的措辞** | ✅ **优先** |
+    | ② 外挂 | `data/zh2en.json.gz`（CC-CEDICT 生成，6 万余条） | **广度**：内置没有的词也能译 | 只补空缺 |
+
+    两者的存在意义不同：**内置是措辞，外挂是覆盖**。故内置必须优先 ——
+    否则我们会把手工调好的 prompt 用词换成词典里的通用译法。
+
+    ⚠️ 实现上**必须按首字建索引**：外挂有 6 万余条，若照旧每次调用都
+    `sorted(ZH2EN, key=len, reverse=True)` 全量扫一遍，一条 prompt 会慢到不可用
+    （`tr()` 每份提示词要被调用几十次）。
+    """
     if not text:
         return ""
-    out = text
-    for zh in sorted(ZH2EN, key=len, reverse=True):
-        if zh in out and all(ord(c) > 127 for c in zh):
-            out = out.replace(zh, ZH2EN[zh])
-    return out
+    idx = _lookup_index()
+    out: list[str] = []
+    i, n = 0, len(text)
+    while i < n:
+        hit = None
+        for zh, en in idx.get(text[i], ()):     # 已按长度降序 → 最长匹配优先
+            if text.startswith(zh, i):
+                hit = (zh, en)
+                break
+        if hit is None:
+            out.append(text[i])
+            i += 1
+            continue
+        zh, en = hit
+        # ⚠️ 中译英**必须补空格**：中文没有词间空格，直接拼会得到
+        #    `黄铜护目镜 → brassgoggles`、`亚麻衬衫 → linenshirt`（实测踩到，
+        #    而且外挂词典装上以后**词翻得越多、粘得越厉害**，比装之前更明显）。
+        #    只在"上一段以 ASCII 字母数字结尾 + 本段以 ASCII 字母数字开头"时补，
+        #    避免把标点/中文粘连处也塞进空格。
+        if out and re.search(r"[A-Za-z0-9]$", out[-1]) and re.match(r"[A-Za-z0-9]", en):
+            out.append(" ")
+        out.append(en)
+        i += len(zh)
+    return "".join(out)
+
+
+# ── 外挂词典（`data/zh2en.json.gz`）────────────────────────────
+# 惰性加载一次；模块级缓存，故 `tr()` 的调用点**无需任何改动**即自动受益。
+
+_EXTERNAL: dict[str, str] | None = None
+_EXTERNAL_NOTE: str = ""
+_INDEX: dict[str, list[tuple[str, str]]] | None = None
+
+
+def external_dict() -> dict[str, str]:
+    """外挂词典（没装则空表）。读取**失败不静默** —— 见 `dict_report()`。"""
+    global _EXTERNAL, _EXTERNAL_NOTE
+    if _EXTERNAL is None:
+        _EXTERNAL, _EXTERNAL_NOTE = {}, ""
+        # ⚠️ 目录名是 `词库/` 而**不是 `data/`** —— 仓库根 `.gitignore` 的 `data/`
+        #    没锚定，会连带忽略任何层级的 `data/`（详见 `工具/生成词库.py`）。
+        p = Path(__file__).resolve().parent.parent / "词库" / "zh2en.json.gz"
+        if p.is_file():
+            try:
+                with gzip.open(p, "rt", encoding="utf-8") as fh:
+                    blob = json.load(fh)
+                meta = blob.get("_meta", {}) or {}
+                _EXTERNAL = {
+                    k: v for k, v in (blob.get("zh2en") or {}).items()
+                    if isinstance(k, str) and isinstance(v, str)
+                    and any(ord(c) > 127 for c in k)      # 键必须含中文，防误替换英文
+                }
+                _EXTERNAL_NOTE = (f"{len(_EXTERNAL)} 条 · 来源 {meta.get('source', '?')}"
+                                  f" · 许可 {meta.get('license', '?')}")
+            except Exception as e:                        # noqa: BLE001
+                # ⚠️ **绝不能静默跳过**：词典损坏时"英文纯度"会悄悄退回手写词表水平，
+                #    而用户以为装好了 —— 这正是本项目最怕的失败形态。
+                #    故记下来，由 `doctor` / `rules` / `dict_report()` 展示。
+                _EXTERNAL_NOTE = f"⚠️ 读取失败（{type(e).__name__}: {e}）"
+    return _EXTERNAL
+
+
+def _lookup_index() -> dict[str, list[tuple[str, str]]]:
+    """按**首字**索引两层词表，同首字内**长度降序**（保证最长匹配）。
+
+    外挂层只补内置没有的键 → 内置措辞优先。
+    """
+    global _INDEX
+    if _INDEX is None:
+        merged: dict[str, str] = dict(external_dict())
+        merged.update(ZH2EN)                    # ⭐ 内置覆盖外挂 = 内置优先
+        idx: dict[str, list[tuple[str, str]]] = {}
+        for zh, en in merged.items():
+            if not zh or not any(ord(c) > 127 for c in zh):
+                continue
+            idx.setdefault(zh[0], []).append((zh, en))
+        for v in idx.values():
+            v.sort(key=lambda kv: len(kv[0]), reverse=True)
+        _INDEX = idx
+    return _INDEX
+
+
+def dict_report() -> str:
+    """词表状态（供 `doctor` / `rules` 展示）—— **外挂装没装要看得见**。"""
+    n = len(external_dict())
+    if _EXTERNAL_NOTE.startswith("⚠️"):
+        return f"  外挂词典：{_EXTERNAL_NOTE}"
+    if n:
+        return f"  ✅ 外挂词典：{_EXTERNAL_NOTE}；内置 {len(ZH2EN)} 条（**内置优先**）"
+    return ("  ℹ️ 未装外挂词典（只用内置 %d 条）—— 想要更广的中译英覆盖，"
+            "跑一次 `python 工具/生成词库.py`（从 CC-CEDICT 生成，零第三方依赖）"
+            % len(ZH2EN))
 
 
 def _join(parts, sep: str = ", ") -> str:

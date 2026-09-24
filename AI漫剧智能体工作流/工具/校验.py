@@ -730,6 +730,48 @@ MECHANISM_RULES = [
         "keyword": "test_generic.py",
         "must_in": ["07-智能体运行时/README.md"],
     },
+    # ── 通用性扩大到 world 与批量（2026-09-24）──
+    {
+        "name": "07 运行时：`world` 是自由文本（未命中题材键回退到时代词）",
+        "keyword": "回退到时代词",
+        "must_in": ["07-智能体运行时/README.md"],
+    },
+    {
+        "name": "07 运行时：批量的优先级「用户清单 > 题材池 > 通用骨架」且未命中要明说",
+        "keyword": "用户给的清单 > 题材池 > 题材无关的通用身份",
+        "must_in": ["07-智能体运行时/README.md"],
+    },
+    {
+        "name": "07 运行时：六类资产冒烟测试（防某类静默崩）",
+        "keyword": "test_agent_smoke.py",
+        "must_in": ["07-智能体运行时/README.md"],
+    },
+    # ── 中译英外挂词典（2026-09-24）──
+    {
+        "name": "07 运行时：词表两层且**内置优先**（措辞层不被通用译法顶掉）",
+        "keyword": "内置措辞层",
+        "must_in": ["07-智能体运行时/README.md"],
+    },
+    {
+        "name": "07 运行时：词库署名为 CC-CEDICT（**CC BY-SA 4.0 硬要求**）",
+        "keyword": "CC-CEDICT",
+        "must_in": ["07-智能体运行时/README.md", "07-智能体运行时/词库/README.md"],
+    },
+    {
+        "name": "07 运行时：词库许可声明（CC BY-SA 4.0）",
+        "keyword": "CC BY-SA 4.0",
+        "must_in": ["07-智能体运行时/README.md", "07-智能体运行时/词库/README.md"],
+    },
+    {
+        "name": "07 运行时：词库目录是 `词库/` 而非 `data/`（防被 gitignore 静默忽略）",
+        "keyword": "不是 `data/`",
+        "must_in": ["07-智能体运行时/README.md"],
+    },
+    {
+        "name": "07 运行时：外挂词典有测试（含损坏不静默）",
+        "keyword": "test_dict.py",
+        "must_in": ["07-智能体运行时/README.md"],
+    },
     # ── 风格锚点表的**权威来源**（2026-09-24 订正）──
     # 原先（§六 / 根 README / ID-REGISTRY）都指向 `TURNAROUND-STANDARD.md` §七，
     # 而 §七 是「光影设计的三个来源与分工」—— 实为**差一节**：画质参数与

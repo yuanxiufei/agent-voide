@@ -29,7 +29,8 @@ try:
 except Exception:
     pass
 
-from src import batch, dispatcher, handover, module_loader, registry  # noqa: E402
+from src import (batch, dispatcher, handover, module_loader,  # noqa: E402
+                 prompt_engine, registry)
 from src.agent import AgentConfig, DramaAssetAgent            # noqa: E402
 from src.consistency import check_required, check_text_risk   # noqa: E402
 from src.module_loader import ModuleLoader                    # noqa: E402
@@ -213,6 +214,10 @@ def cmd_rules(a: argparse.Namespace) -> int:
     #    「prompt 为什么和上次不一样」（实测踩过同类问题：负面词被截断显示 → 看不见权重标记）
     hr("🧩 本机覆盖层（prompts/overrides/）")
     print(ag.rules.overrides.report())
+    # ⚠️ 外挂词典也要**看得见** —— 它静默影响每一份英文提示词的翻译质量，
+    #    没装/装坏都必须能一眼看出来（否则"英文怎么变差了"无从排查）。
+    hr("📚 中译英词表（内置 + 外挂）")
+    print(prompt_engine.dict_report())
     return 0
 
 
@@ -250,6 +255,8 @@ def cmd_doctor(a: argparse.Namespace) -> int:
         print(f"  {icon} {p['name']:10s} {p['reason']}")
     hr("🧩 本机覆盖层（prompts/overrides/）")
     print(ag.rules.overrides.report())
+    hr("📚 中译英词表（内置 + 外挂）")
+    print(prompt_engine.dict_report())
     hr("输图后人工复核清单（RULE-005 要求逐字检查隐蔽位置）")
     for x in d["text_risk_checklist"]:
         print(f"  □ {x}")
@@ -411,11 +418,19 @@ def cmd_batch(a: argparse.Namespace) -> int:
           f"（同 Gate / 指纹 / 版本 / 落盘）")
     print()
     # ⚠️ 预览必须用 `ag.plan_batch()`（会带上世界观）—— 直接 `batch.plan()`
-    #    会落到通用池，于是「预览是主角/伙伴、实际是拾荒者」两边不一致（实测踩到）
-    _t, preview = ag.plan_batch(text, count=count, asset_type=a.type or "")
+    #    会落到通用池，于是「预览是主事者/手艺人、实际是拾荒者」两边不一致（实测踩到）
+    _t, preview, plan_notes = ag.plan_batch(text, count=count,
+                                            asset_type=a.type or "")
     for it in preview:
         print(f"  {it['index']:>2}. {it['label']:<22s} {it['text']}")
     print()
+    # ⭐ 展开依据**必须展示** —— 未命中题材池时这是唯一的可见信号
+    #    （否则用户看到通用身份/类目，不知道那是兜底，也就无从修正）
+    if plan_notes:
+        hr("展开依据")
+        for n in plan_notes:
+            print(f"  {n}")
+        print()
     res = ag.batch(text, count=count, asset_type=a.type or "",
                    generate=(not a.no_image))
     hr("📋 花名册")
