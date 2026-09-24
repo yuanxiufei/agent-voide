@@ -206,10 +206,12 @@ def _run(tmp: Path) -> int:
     print()
     print("── ⚠️ 诚实说明：§六 另两项必须显式列为「未核验」 ──")
     txt = "\n".join(drift.UNCHECKED_NOTES)
-    # 风格锚点**现在能核验了**（按权威规则判定，不依赖那张不存在的表），
-    # 但工作流侧那条错引用仍需订正 —— 必须写明，不能因为"能跑"就不提。
-    check("明确列出「§六 的错引用仍待订正」并给出正确位置",
-          "错引用" in txt and "VISUAL_BIBLE.md` §4.8" in txt, txt[:120])
+    # 风格锚点**能核验**（按权威规则判定，不依赖那张表）；
+    # 工作流侧那条错引用**已订正**，但仍须写清楚"权威位置在哪"，供人核对。
+    check("写明风格锚点表的正确位置（VISUAL_BIBLE §4.8 + TURNAROUND §六）",
+          "VISUAL_BIBLE.md` §4.8" in txt and "TURNAROUND-STANDARD.md` §六" in txt,
+          txt[:150])
+    check("写明这条引用曾**差一节**（§七 → §六）", "差一节" in txt)
     check("明确列出「不验 ID 的语义正确性」", "语义正确性" in txt)
     check("明确列出「不验风格本身好不好（艺术判断）」", "艺术判断" in txt)
 

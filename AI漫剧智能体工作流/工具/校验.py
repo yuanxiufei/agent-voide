@@ -698,6 +698,27 @@ MECHANISM_RULES = [
         "keyword": "不依赖那张表",
         "must_in": ["07-智能体运行时/README.md"],
     },
+    # ── 风格锚点表的**权威来源**（2026-09-24 订正）──
+    # 原先（§六 / 根 README / ID-REGISTRY）都指向 `TURNAROUND-STANDARD.md` §七，
+    # 而 §七 是「光影设计的三个来源与分工」—— 实为**差一节**：画质参数与
+    # 电影感具体化就在该文件 **§六**；画风/LUT 在 `VISUAL_BIBLE.md` §4.8。
+    # ⚠️ 机制覆盖只查"是否出现"，故把**正确来源**钉在这三处：
+    #    若有人改回旧写法（不含 `VISUAL_BIBLE.md` §4.8），这条会立刻失败。
+    {
+        "name": "风格锚点表权威来源（总控 §六）",
+        "keyword": "VISUAL_BIBLE.md` §4.8",
+        "must_in": ["00-总控路由.md"],
+    },
+    {
+        "name": "风格锚点表权威来源（根 README 对照表）",
+        "keyword": "VISUAL_BIBLE.md` §4.8",
+        "must_in": ["README.md"],
+    },
+    {
+        "name": "风格锚点表权威来源（ID-REGISTRY 模板）",
+        "keyword": "VISUAL_BIBLE.md` §4.8",
+        "must_in": ["01-剧本文本/模板/ID-REGISTRY.md"],
+    },
 ]
 
 # 禁用前缀：pattern 命中即失败，除豁免文件外
