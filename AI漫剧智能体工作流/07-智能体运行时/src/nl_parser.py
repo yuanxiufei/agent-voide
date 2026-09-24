@@ -356,7 +356,11 @@ def parse(text: str, default_type: str = "") -> ParsedInput:
         # ⚠️ `world` 为空时**不要拼「-未定」**：那串本意是"让人看见没识别出题材"，
         #    代价却是**污染资产名**（实测批量产出 10 个「主角-未定」「店主-未定」）。
         #    "没识别出题材"这个事实由 `world=""` 本身 + 报告承担，不必写进名字。
-        p.name = f"{p.occupation}-{p.world}" if p.world else (p.occupation or "")
+        # ⚠️ 但「角色」这个**身份兜底不能一起去掉** —— 第一版写成
+        #    `f"{p.occupation}-{p.world}"`，于是职业抽不到时名字变成「**-民国**」
+        #    （前导连字符，实测端到端跑出来）。故 occupation 空时仍用「角色」。
+        p.name = (f"{p.occupation or '角色'}-{p.world}" if p.world
+                  else (p.occupation or ""))
 
     p.hair_hints = [h for h in HAIR_WORDS if h in text] + \
         [f"{c}发" for c in COLORS if f"{c}发" in text]
