@@ -303,12 +303,26 @@ class DramaAssetAgent:
                 "已建" if pano.exists() else
                 "未建（建议 `python main.py panorama " + card.id + "`）")
 
-        # ⑤ 未核验项 —— **必须显式列出**，不能让人以为"verify 通过 = 一切都对"
+        # ⑤ §六 漂移检测（ID 是否都在总表里）—— 顺带核验本资产的交付物
+        from . import drift
+        known, _gap = drift.load_registry(self.root)
+        pd = self.root / "output" / "prompts" / card.id
+        unreg: list[str] = []
+        for f in sorted(pd.glob("*.md")) if pd.is_dir() else []:
+            unreg += drift.check_text(f.read_text(encoding="utf-8"), known).unregistered
+        unreg = list(dict.fromkeys(unreg))
+        add("§六 ID 漂移检测（交付物引用的 ID 都在总表里）", not unreg,
+            "✅ 未发现未登记 ID" if not unreg
+            else "引用了未登记 ID：" + "、".join(unreg[:6])
+                 + "（`python main.py drift` 可全库检查）")
+
+        # ⑥ 未核验项 —— **必须显式列出**，不能让人以为"verify 通过 = 一切都对"
         unchecked = [
             "**图与图是否同一角色/同一空间**（需视觉模型做语义比对，本命令不判定）",
             "图像内容是否符合描述（同上）",
             "文字是否真的没出现在图里（§1.6 要求**人工逐字**检查隐蔽位置："
             "背景招牌/书页/屏幕/衣物印字/包装/道具铭文）",
+            "**ID 是否用在这里是对的**（`drift` 只验在不在总表）",
         ]
         ok = all(c["ok"] is not False for c in checks)
         return {"ok": ok, "asset_id": card.id, "type": card.type,

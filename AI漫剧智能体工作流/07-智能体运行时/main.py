@@ -305,6 +305,36 @@ def cmd_panorama(a: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_drift(a: argparse.Namespace) -> int:
+    """§六「漂移检测」：交付物引用的 ID 是否都在总表里、有没有自造 ID。
+
+    这是 §六 里那句「每当有模块交付，检查其引用的 ID 是否都在 ID 总表中」
+    的**确定性实现** —— 原本它只是被原样粘进 System Prompt。
+    """
+    from src import drift
+    ag = DramaAssetAgent(AgentConfig.load(ROOT))
+    known, gap = drift.load_registry(ag.cfg.root)
+
+    if a.file:
+        p = Path(a.file)
+        if not p.is_file():
+            print(f"❌ 文件不存在：{a.file}")
+            return 2
+        hr(f"🧭 漂移检测 · 交付物 {a.file}")
+        rep = drift.check_text(p.read_text(encoding="utf-8"), known,
+                               scope=str(a.file))
+        rep.registry_gap = []
+    else:
+        hr("🧭 漂移检测 · 全库（§六 全局一致性守护）")
+        rep = drift.scan_output(ag.cfg.root, known)
+        rep.registry_gap = gap
+
+    rep.type_conflict = drift.check_conflicts(ag.cfg.root)
+    rep.unchecked = list(drift.UNCHECKED_NOTES)
+    print(rep.render())
+    return 0 if rep.ok else 1
+
+
 def cmd_verify(a: argparse.Namespace) -> int:
     """核验产出实物（卡 / 提示词 / 图 / 索引表）。"""
     ag = DramaAssetAgent(AgentConfig.load(ROOT))
@@ -596,6 +626,9 @@ def build_parser() -> argparse.ArgumentParser:
     vf = sub.add_parser("verify", help="核验产出实物（卡 / 提示词 / 图 / 索引表）")
     vf.add_argument("asset_id")
 
+    df = sub.add_parser("drift", help="§六 漂移检测：引用的 ID 在不在总表里")
+    df.add_argument("file", nargs="?", help="要检查的交付物文件；省略则扫全库 output/")
+
     ag_ = sub.add_parser("angles", help="场景 S01–S06 六角度 + 索引表（§4.1）")
     ag_.add_argument("env_id", help="场景 ID，如 ENV_001")
     ag_.add_argument("-v", "--verbose", action="store_true", help="逐角度打印提示词")
@@ -667,14 +700,14 @@ def main() -> int:
         return 0
     # 无子命令时默认走 ask（支持 `python main.py "一个废土女佣兵"` 的直白用法）
     if argv[0] not in ("ask", "probe", "batch", "panorama", "angles", "verify",
-                       "list", "show", "rules", "export", "doctor", "agents",
-                       "outline", "run", "init", "route", "handover", "gate",
-                       "doc", "-h", "--help"):
+                       "drift", "list", "show", "rules", "export", "doctor",
+                       "agents", "outline", "run", "init", "route", "handover",
+                       "gate", "doc", "-h", "--help"):
         argv = ["ask"] + argv
     a = parser.parse_args(argv)
     fn = {"ask": cmd_ask, "probe": cmd_probe, "batch": cmd_batch,
           "panorama": cmd_panorama, "angles": cmd_angles, "verify": cmd_verify,
-          "list": cmd_list, "show": cmd_show,
+          "drift": cmd_drift, "list": cmd_list, "show": cmd_show,
           "rules": cmd_rules, "export": cmd_export, "doctor": cmd_doctor,
           "agents": cmd_agents, "outline": cmd_outline, "run": cmd_run,
           "init": cmd_init, "route": cmd_route, "handover": cmd_handover,
