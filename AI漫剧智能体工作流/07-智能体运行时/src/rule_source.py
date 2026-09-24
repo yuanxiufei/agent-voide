@@ -43,6 +43,8 @@ RULE_FILES = {
     "turnaround": "02-服化道/引擎/TURNAROUND-STANDARD.md",
     "asset_card": "02-服化道/模板/ASSET_CARD.yaml",
     "router": "00-总控路由.md",
+    # ⚠️ 在 `模板/` 下，不在 `引擎/` 下（实测按常识猜路径踩到过）
+    "index_templates": "02-服化道/模板/INDEX-TEMPLATES.md",
 }
 
 
@@ -433,6 +435,58 @@ class RuleSource:
                       if l.strip().startswith(("1.", "2.", "3."))],
         }
         return self._cache["pano"]  # type: ignore[return-value]
+
+    # ── 场景六角度（`模板/INDEX-TEMPLATES.md` §4.1）──
+    @property
+    def scene_angles(self) -> dict:
+        """§4.1 场景资产库索引表 —— **场景多角度生成的必需机制**。
+
+        原文警告（**必须记住**）：
+            「⚠️ 这是场景多角度生成的必需机制。**不建此表 → 各角度独立从文字生成
+              → 空间必然漂移。**」
+
+        生成铁则（原文 4 条，逐字保留）：
+            1. **必须先出 S01**（纯文字 prompt），保存其 URL 为 `<场景名>_S01_url`
+            2. **S02–S06 全部以 S01 为 reference_image**，追加 `same scene as reference`
+            3. 每张只写该视角**实际可见**的物品，不可见的不写
+            4. 材质词/颜色词从场景圣经**复制，不替换同义词**
+        """
+        if "s_ang" in self._cache:
+            return self._cache["s_ang"]  # type: ignore[return-value]
+        t = self.raw("index_templates")
+        i = _find_heading(t, "场景资产库索引表")
+        rows = _table_after(t, i) if i >= 0 else []
+        angles = [{"no": r.get("编号", ""), "shot": r.get("景别", ""),
+                   "cam": r.get("摄像机方位→朝向", ""),
+                   "cover": r.get("空间覆盖/动作区域", "")}
+                  for r in rows if r.get("编号")]
+        if not angles:            # 表头写法变化时的兜底（避免静默空表）
+            angles = [{"no": f"S{n:02d}", "shot": "", "cam": "", "cover": ""}
+                      for n in range(1, 7)]
+
+        # 生成铁则（编号列表）
+        rules: list[str] = []
+        ls = _lines(t)
+        for k in range(max(0, i), min(len(ls), i + 40)):
+            m = re.match(r"^\s*([1-9])[.、]\s*(.+)$", ls[k])
+            if m and ("S01" in m.group(2) or "reference" in m.group(2)
+                      or "可见" in m.group(2) or "复制" in m.group(2)):
+                rules.append(m.group(2).strip())
+
+        # 分镜选图规则（第二张表）
+        picks: list[dict] = []
+        j = None
+        for k in range(max(0, i), min(len(ls), i + 40)):
+            if "分镜选图规则" in ls[k]:
+                j = k
+                break
+        if j is not None:
+            picks = [{"shot": r.get("分镜景别", ""), "first": r.get("优先", ""),
+                      "alt": r.get("备选", "")}
+                     for r in _table_after(t, j) if r.get("分镜景别")]
+
+        self._cache["s_ang"] = {"angles": angles, "rules": rules, "picks": picks}
+        return self._cache["s_ang"]  # type: ignore[return-value]
 
     # ── 文字屏蔽（RULE-005）──
     @property

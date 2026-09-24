@@ -280,6 +280,49 @@ def cmd_panorama(a: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_verify(a: argparse.Namespace) -> int:
+    """核验产出实物（卡 / 提示词 / 图 / 索引表）。"""
+    ag = DramaAssetAgent(AgentConfig.load(ROOT))
+    hr(f"🔍 产出核验 · {a.asset_id}")
+    r = ag.verify(a.asset_id)
+    if not r.get("checks") and r.get("error"):
+        print(f"  ❌ {r['error']}")
+        return 2
+    for c in r["checks"]:
+        icon = {True: "✅", False: "❌", None: "ℹ️"}.get(c["ok"], "·")
+        print(f"  {icon} {c['name']}：{c['detail']}")
+    hr("⚠️ 本命令**未**核验的项（不要以为 verify 通过 = 一切都对）")
+    for u in r.get("unchecked", []):
+        print(f"  □ {u}")
+    print()
+    print(f"  结论：{'✅ 客观项全部通过' if r['ok'] else '❌ 有客观项未通过'}")
+    return 0 if r["ok"] else 1
+
+
+def cmd_angles(a: argparse.Namespace) -> int:
+    """场景 S01–S06 六角度 + 场景资产库索引表（INDEX-TEMPLATES §4.1）。"""
+    ag = DramaAssetAgent(AgentConfig.load(ROOT))
+    hr(f"🎬 场景多角度（§4.1）· {a.env_id}")
+    res = ag.angles(a.env_id, generate=(not a.no_image))
+    if not res.get("ok"):
+        print(f"  ❌ {res.get('error')}")
+        return 2
+    for n in res["notes"]:
+        print(f"  · {n}")
+    print()
+    hr("📋 场景资产库索引表（§4.1 要求**必须建**）")
+    print(res["index_table"])
+    print()
+    if a.verbose:
+        for it in res["items"]:
+            hr(f"{it['no']} · {it['shot']}")
+            print(it["prompt_en"])
+    hr("📦 落盘")
+    for k, v in res["files"].items():
+        print(f"  {k:6s} {v}")
+    return 0
+
+
 def cmd_batch(a: argparse.Namespace) -> int:
     """批量生成（蓝图 §十八：一次生成 10 个废土 NPC）。"""
     text = " ".join(a.text)
@@ -519,6 +562,15 @@ def build_parser() -> argparse.ArgumentParser:
     pa.add_argument("--no-image", action="store_true")
     pa.add_argument("--provider", choices=["mock", "openai", "stability"])
 
+    vf = sub.add_parser("verify", help="核验产出实物（卡 / 提示词 / 图 / 索引表）")
+    vf.add_argument("asset_id")
+
+    ag_ = sub.add_parser("angles", help="场景 S01–S06 六角度 + 索引表（§4.1）")
+    ag_.add_argument("env_id", help="场景 ID，如 ENV_001")
+    ag_.add_argument("-v", "--verbose", action="store_true", help="逐角度打印提示词")
+    ag_.add_argument("--no-image", action="store_true")
+    ag_.add_argument("--provider", choices=["mock", "openai", "stability"])
+
     ba = sub.add_parser("batch", help="批量生成（蓝图 §十八：一次 10 个 NPC）")
     ba.add_argument("text", nargs="+")
     ba.add_argument("--count", type=int, default=0, help="数量（默认从输入里的「N个」取，否则 10）")
@@ -580,13 +632,14 @@ def main() -> int:
         parser.print_help()
         return 0
     # 无子命令时默认走 ask（支持 `python main.py "一个废土女佣兵"` 的直白用法）
-    if argv[0] not in ("ask", "probe", "batch", "panorama", "list", "show",
-                       "rules", "export", "doctor", "agents", "outline", "run",
-                       "init", "route", "handover", "gate", "doc", "-h", "--help"):
+    if argv[0] not in ("ask", "probe", "batch", "panorama", "angles", "verify",
+                       "list", "show", "rules", "export", "doctor", "agents",
+                       "outline", "run", "init", "route", "handover", "gate",
+                       "doc", "-h", "--help"):
         argv = ["ask"] + argv
     a = parser.parse_args(argv)
     fn = {"ask": cmd_ask, "probe": cmd_probe, "batch": cmd_batch,
-          "panorama": cmd_panorama,
+          "panorama": cmd_panorama, "angles": cmd_angles, "verify": cmd_verify,
           "list": cmd_list, "show": cmd_show,
           "rules": cmd_rules, "export": cmd_export, "doctor": cmd_doctor,
           "agents": cmd_agents, "outline": cmd_outline, "run": cmd_run,

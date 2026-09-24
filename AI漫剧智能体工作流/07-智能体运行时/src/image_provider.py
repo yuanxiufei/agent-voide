@@ -57,6 +57,24 @@ def write_png(path: str, width: int, height: int, pixel_fn) -> None:
         f.write(blob)
 
 
+def png_size(path: str) -> tuple[int, int] | tuple[None, None]:
+    """读 PNG 的宽高（只读头部，不解码全图）。
+
+    用途：核验产出图是否真是**预期尺寸**（尺寸错了多半是 Provider 参数没生效）。
+    ⚠️ 只支持 PNG —— 本项目只用 PNG。
+    """
+    try:
+        with open(path, "rb") as f:
+            head = f.read(24)
+        if len(head) < 24 or head[:8] != b"\x89PNG\r\n\x1a\n":
+            return None, None
+        w = int.from_bytes(head[16:20], "big")
+        h = int.from_bytes(head[20:24], "big")
+        return w, h
+    except Exception:                                                # noqa: BLE001
+        return None, None
+
+
 @dataclass
 class ProviderInfo:
     name: str

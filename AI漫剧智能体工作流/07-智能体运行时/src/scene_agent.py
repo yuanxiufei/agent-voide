@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from .prompt_engine import pick
 from .schema import AssetCard, SceneDNA
 
 # ─────────────────────────────────────────────────────────────
@@ -406,7 +407,126 @@ def _fill(card: AssetCard, parsed) -> list[str]:
     return notes
 
 
-def build_card(parsed: Parsed, asset_id: str, now: str) -> AssetCard:
+# ⚠️ 六个角度的**英文**（景别 / 机位 / 可见范围）。
+# 工作流的 §4.1 索引表只有中文 —— 直接进英文 prompt 会夹中文（本项目已复发多次）。
+# key = 编号；表头若改动，`angle_prompts` 会回退中文并在返回里标注（见下）。
+ANGLE_EN: dict[str, dict[str, str]] = {
+    "S01": {"shot": "extreme wide shot (BASELINE)",
+            "cam": "from the south side, facing north",
+            "cover": "the whole space — all furniture plus the north wall and windows"},
+    "S02": {"shot": "medium shot",
+            "cam": "from the south-west corner, facing north-east",
+            "cover": "the core furniture zone plus tabletop dressing"},
+    "S03": {"shot": "close-up, top-down",
+            "cam": "directly overhead, looking down",
+            "cover": "tabletop prop details"},
+    "S04": {"shot": "side view with depth",
+            "cam": "from the east side, facing west",
+            "cover": "the shelving / storage zone and the depth of the room"},
+    "S05": {"shot": "medium shot, framed view",
+            "cam": "from outside the north window, facing south",
+            "cover": "the interior wide, framed by the window"},
+    "S06": {"shot": "low angle, looking up",
+            "cam": "from near the floor, looking up",
+            "cover": "ceiling structure, beams and hanging objects"},
+}
+
+
+def angle_prompts(sd: SceneDNA, angle: dict, *, scene_name: str = "",
+                  ref_url: str = "", pano_url: str = "") -> tuple[str, str]:
+    """生成**单个角度**的中英提示词（`模板/INDEX-TEMPLATES.md` §4.1）。
+
+    ⭐ 严格照原文的 4 条生成铁则：
+      1. **必须先出 S01**（纯文字 prompt）—— 调用方保证；本函数对 S01 不加 reference 段
+      2. **S02–S06 全部以 S01 为 reference_image**，追加 `same scene as reference`
+      3. 每张只写该视角**实际可见**的物品，不可见的不写 → 显式写进提示词
+      4. 材质词/颜色词从场景圣经**复制，不替换同义词**
+         → 直接复用**同一个 SceneDNA**（不经任何改写），从机制上保证用词一致
+
+    ⚠️ 与全景（§4.6）的分工：全景定**空间基准**，S01–S06 出**分镜可用图**，
+       全部以全景为空间参照。
+    """
+    no = (angle.get("no") or "").upper()
+    shot_cn = (angle.get("shot") or "").replace("**", "")
+    cam_cn = angle.get("cam", "")
+    cover_cn = angle.get("cover", "")
+    is_base = no == "S01"
+
+    # ⚠️ 英文 prompt 用 `ANGLE_EN`；缺条目时**回退中文**（宁可夹中文，也不要空字段）
+    en_meta = ANGLE_EN.get(no, {})
+    shot = en_meta.get("shot") or shot_cn
+    cam = en_meta.get("cam") or cam_cn
+    cover = en_meta.get("cover") or cover_cn
+
+    arch = pick(sd.building_en, sd.building)
+    mat = pick(sd.materials_en, sd.materials)
+    light = pick(sd.light_source_en, sd.light_source)
+    atmo = pick(sd.atmosphere_en, sd.atmosphere)
+
+    # 场景名：英文段优先用 `name_en`（工作流没有该字段时它由 `SCENE_EN` 表提供）
+    name_for_en = pick(sd.name_en, scene_name)
+    en = [
+        f"Create a {shot or 'shot'} of the SAME environment"
+        + (f" — {name_for_en}" if name_for_en else "")
+        + " for a cinematic AI-animation production asset library.",
+        f"CAMERA: {cam or 'see shot type'}",
+        f"VISIBLE IN THIS ANGLE (render ONLY what is visible from here): {cover}",
+        "SCENE (locked — **copy these words verbatim, do NOT substitute synonyms**):",
+        f"ARCHITECTURE: {arch}",
+        f"MATERIALS: {mat}",
+        f"LIGHT: {light}",
+        f"ATMOSPHERE: {atmo}",
+    ]
+    if not is_base:
+        en.append("same scene as reference — this view MUST use S01 as its reference image")
+        en.append(f"REFERENCE (S01): {ref_url or '<S01 URL 待填>'}")
+    if pano_url:
+        en.append(f"SPATIAL BASELINE (360° panorama, §4.6): {pano_url}")
+    en.append("CONSISTENCY: architecture, doors and windows, furniture, floor, "
+              "light sources and the main spatial relationship must match S01 exactly. "
+              "Do not restructure the space.")
+    if is_base:
+        en.append("⚠️ S01 is the BASELINE view — all later angles are derived from it; "
+                  "make the whole space readable here.")
+
+    # ⚠️ 中文段用 `*_cn`（工作流原文的中文），英文段用 `ANGLE_EN` ——
+    #    两者不能混用变量，否则中文 prompt 里会变成英文角度描述
+    cn = [
+        f"【场景角度 {no}】{shot_cn}",
+        f"机位：{cam_cn}",
+        f"本视角可见范围（**只画这里有的**）：{cover_cn}",
+        "场景锁定（用词**从场景圣经复制，不换同义词**）：",
+        f"建筑：{arch}",
+        f"材料：{mat}",
+        f"光线：{light}",
+        f"氛围：{atmo}",
+    ]
+    if not is_base:
+        cn.append("**必须以 S01 为参考图**（reference_image），并追加 `same scene as reference`")
+        cn.append(f"S01 参考图：{ref_url or '（待填）'}")
+    if pano_url:
+        cn.append(f"空间基准（360° 全景）：{pano_url}")
+    cn.append("一致性：建筑 / 门窗 / 家具 / 地面 / 光源 / 主空间关系必须与 S01 完全一致，"
+              "不得无理由重构空间")
+    return "\n".join(en), "\n".join(cn)
+
+
+def index_table(angles: list[dict], urls: dict[str, str]) -> str:
+    """产出 §4.1 要求的那张**场景资产库索引表**。
+
+    ⚠️ 原文明确：「**不建此表 → 各角度独立从文字生成 → 空间必然漂移**」——
+       故这张表不是"文档装饰"，而是机制本身的一部分，必须与图一起产出。
+    """
+    rows = ["| 编号 | 景别 | 摄像机方位→朝向 | 空间覆盖/动作区域 | 参考图 URL |",
+            "|---|---|---|---|---|"]
+    for a in angles:
+        no = a.get("no", "")
+        rows.append(f"| {no} | {a.get('shot', '')} | {a.get('cam', '')} | "
+                    f"{a.get('cover', '')} | `{urls.get(no, '') or '（待出图）'}` |")
+    return "\n".join(rows)
+
+
+def build_card(parsed, asset_id: str, now: str) -> AssetCard:
     preset = _pick_preset(parsed.raw)
     return AssetCard(
         id=asset_id, type="environment",

@@ -32,7 +32,7 @@ from . import (batch as batch_mod, character_agent, costume_agent,
 from .asset_manager import AssetManager, now_str
 from .consistency import (ConsistencyReport, check_modify_scope, check_required,
                           check_text_risk, full_check, text_risk_checklist)
-from .image_provider import get_provider
+from .image_provider import get_provider, png_size
 from .llm_client import LLMClient
 from .prompt_engine import build_prompts
 from .router import route
@@ -196,6 +196,201 @@ class DramaAssetAgent:
                 "prompt_en": en, "prompt_cn": cn, "negative": neg,
                 "images": result.image_paths, "consistency": rep,
                 "files": {"card": str(path), "prompt": str(pr), "metadata": str(md)}}
+
+    # ── 产出核验（**图像层**）──
+
+    def verify(self, asset_id: str) -> dict:
+        """核验一张资产的**产出实物**（卡 / 提示词 / 图 / 索引表）。
+
+        ⚠️⚠️ **本命令明确不判定「图与图是不是同一个人」。**
+        那属于**图像语义比对**，没有视觉模型时无法可靠判定 —— 用像素/直方图硬凑出来的
+        「一致/不一致」结论很可能是错的，而这一项偏偏最不能错（**脸崩了却报一致，
+        比不检查更糟**）。故这里只核验**客观可验证**的部分，并把未核验项**显式列出**。
+
+        核验项（都可通过/不通过）：
+          · 资产卡：文件在、ID 与注册表一致、必填项过 Gate
+          · 提示词：中英非空、负面词含**权重标记** `any text:1.8`（缺它文字屏蔽失效）
+          · 图像：文件存在、非空、**PNG 尺寸 == 配置尺寸**、是 mock 还是真实出图
+          · 场景：六角度是否齐全 + 索引表是否建了（§4.1「不建此表→空间必然漂移」）
+        """
+        card = self.am.load(self.am.resolve_id(asset_id))
+        if card is None:
+            return {"ok": False, "error": f"找不到资产 {asset_id!r}", "checks": []}
+
+        checks: list[dict] = []
+
+        def add(name: str, ok: bool | None, detail: str):
+            checks.append({"name": name,
+                           "ok": ok,
+                           "detail": detail})
+
+        # ① 资产卡
+        add("资产卡存在", True, f"{card.id} · {card.type} · {card.version}")
+        issued = self.am.registry.get("issued", {})
+        add("ID 已登记", card.id in issued,
+            "在 ID 注册表中" if card.id in issued else "⚠️ 未登记（§四 要求所有 ID 登记）")
+
+        # ② 提示词
+        add("英文提示词非空", bool(card.prompt_en.strip()),
+            f"{len(card.prompt_en)} 字符")
+        cn_left = [c for c in card.prompt_en if "\u4e00" <= c <= "\u9fff"]
+        add("英文提示词无中文残留", not cn_left,
+            "0 处" if not cn_left else f"{len(cn_left)} 处（{''.join(cn_left[:12])}…）")
+        add("负面词含权重标记", "any text:1.8" in card.negative_prompt,
+            "含 `any text:1.8`（缺它文字屏蔽失效，§1.6）"
+            if "any text:1.8" in card.negative_prompt else "❌ 缺 `any text:1.8`")
+
+        # ③ 图像
+        img = (self.root / "output" / "images" / card.id / f"{card.version}.png")
+        if img.exists():
+            w, h = png_size(str(img))
+            add("图像文件存在", True, f"{img.name} · {img.stat().st_size / 1024:.1f} KB")
+            add("图像尺寸符合配置", (w, h) == (self.cfg.width, self.cfg.height),
+                f"实际 {w}×{h}，配置 {self.cfg.width}×{self.cfg.height}")
+            is_mock = self.cfg.provider == "mock"
+            add("出图来源", None,
+                "mock 占位图（版式示意，**不是成图**）" if is_mock
+                else f"{self.cfg.provider} 真实出图")
+        else:
+            add("图像文件存在", False,
+                "未找到（`--no-image` 或未出图）—— 提示词与卡仍可用")
+
+        # ④ 场景专有：六角度 + 索引表
+        if card.type == "environment":
+            ad = self.root / "output" / "prompts" / f"{card.id}_angles" / "angles.json"
+            if ad.exists():
+                data = json.loads(ad.read_text(encoding="utf-8"))
+                got = [i for i in data.get("items", []) if i.get("image")]
+                add("六角度齐全", len(got) >= 6, f"{len(got)}/6 已出图")
+                add("索引表已建", bool(data.get("index_table")),
+                    "§4.1 要求必须建（不建则空间必然漂移）")
+            else:
+                add("六角度已生成", False,
+                    "未生成 —— 跑 `python main.py angles " + card.id + "`")
+            pano = (self.root / "assets" / "scenes" /
+                    f"{card.id}_PanoramaBase" / "v001.json")
+            add("360° 全景基准", pano.exists(),
+                "已建" if pano.exists() else
+                "未建（建议 `python main.py panorama " + card.id + "`）")
+
+        # ⑤ 未核验项 —— **必须显式列出**，不能让人以为"verify 通过 = 一切都对"
+        unchecked = [
+            "**图与图是否同一角色/同一空间**（需视觉模型做语义比对，本命令不判定）",
+            "图像内容是否符合描述（同上）",
+            "文字是否真的没出现在图里（§1.6 要求**人工逐字**检查隐蔽位置："
+            "背景招牌/书页/屏幕/衣物印字/包装/道具铭文）",
+        ]
+        ok = all(c["ok"] is not False for c in checks)
+        return {"ok": ok, "asset_id": card.id, "type": card.type,
+                "checks": checks, "unchecked": unchecked}
+
+    # ── 场景六角度（`模板/INDEX-TEMPLATES.md` §4.1）──
+
+    def angles(self, env_id: str, *, generate: bool | None = None) -> dict:
+        """出场景的 **S01–S06 六角度**，并产出 §4.1 要求的**场景资产库索引表**。
+
+        ⚠️ 原文明确：「**不建此表 → 各角度独立从文字生成 → 空间必然漂移**」——
+        故本方法把「索引表」当作**机制的一部分**产出，而不是可选文档。
+
+        生成铁则（§4.1）：
+          1. **必须先出 S01**（纯文字 prompt）；其 URL 存为 `_S01_url`
+          2. **S02–S06 全部以 S01 为 reference_image**，追加 `same scene as reference`
+          3. 每张只写该视角**实际可见**的物品
+          4. 材质词/颜色词从场景圣经**复制**（同一 SceneDNA，不经改写）
+        """
+        card = self.am.load(self.am.resolve_id(env_id))
+        if card is None:
+            return {"operation": "angles", "ok": False,
+                    "error": f"找不到场景 {env_id!r}（可用 `list --type environment` 查看）"}
+        if card.type != "environment":
+            return {"operation": "angles", "ok": False,
+                    "error": f"{card.id} 是 {card.type}，六角度只对场景（environment）有效"}
+
+        ang = self.rules.scene_angles
+        sd = card.scene_dna
+        # 全景基准（若已出过）作为空间参照一起带上
+        pano_url = ""
+        pano = self.root / "assets" / "scenes" / f"{card.id}_PanoramaBase" / "v001.json"
+        if pano.exists():
+            pano_url = f"output/images/{card.id}_PanoramaBase/v001.png"
+
+        flag = self.cfg.generate if generate is None else generate
+        prov = get_provider(self.cfg.provider, self.cfg.image_cfg) if flag else None
+
+        urls: dict[str, str] = {}
+        items: list[dict] = []
+        ref = ""            # S01 出图后的路径，供 S02–S06 做 reference
+        for a in ang["angles"]:
+            no = a.get("no", "")
+            en, cn = scene_agent.angle_prompts(sd, a, scene_name=card.name,
+                                               ref_url=ref, pano_url=pano_url)
+            neg = self.rules.negative_for("environment")
+            for t in self.rules.scene_negative:
+                if t and t not in neg:
+                    neg = f"{neg}, {t}"
+            img = ""
+            if prov is not None:
+                try:
+                    out = self.root / "output" / "images" / f"{card.id}_angles" / f"{no}.png"
+                    paths = prov.generate(prompt=en, negative_prompt=neg,
+                                          width=self.cfg.width, height=self.cfg.height,
+                                          out_path=str(out))
+                    img = str(paths[0]) if paths else ""
+                except Exception as e:                               # noqa: BLE001
+                    img = f"（出图失败：{str(e)[:60]}）"
+            if img and not img.startswith("（"):
+                urls[no] = f"{card.id}_{no}.png"
+                if no.upper() == "S01":
+                    ref = img          # 铁则 ①：S01 是后续所有角度的 reference
+            items.append({"no": no, "shot": a.get("shot", ""), "cam": a.get("cam", ""),
+                          "cover": a.get("cover", ""), "prompt_en": en,
+                          "prompt_cn": cn, "negative": neg, "image": img})
+
+        table = scene_agent.index_table(ang["angles"], urls)
+        notes: list[str] = []
+        if prov is None:
+            notes.append("未出图（--no-image 或 config 关闭）—— 提示词与索引表已产出")
+        elif not ref:
+            notes.append("⚠️ S01 未成功出图 → S02–S06 **没有参考图可挂**（铁则 ② 要求以 S01 为 reference）")
+        if ref:
+            notes.append(f"✅ S01 已出图，S02–S06 的 prompt 已带上 reference 段：{ref}")
+        notes.append("⚠️ **Provider 暂不支持 image-to-image**：reference 只写进了 prompt"
+                     "（`same scene as reference` + S01 路径）。要真正挂参考图，"
+                     "需给 Provider 加参考图入参（未实现/未实测）")
+        if not pano_url:
+            notes.append("建议先出 `panorama`（§4.6 全景基准），六角度以它为空间参照")
+
+        # 产出：索引表 + 全部角度提示词（一份人读的 md）
+        d = self.root / "output" / "prompts" / f"{card.id}_angles"
+        d.mkdir(parents=True, exist_ok=True)
+        md = d / "index.md"
+        body = [f"# {card.id} 场景多角度（{card.name}）", "",
+                "> 依据 `02-服化道/模板/INDEX-TEMPLATES.md` §4.1。",
+                "> **不建此表 → 各角度独立从文字生成 → 空间必然漂移。**", "",
+                "## 场景资产库索引表", "", table, "",
+                "## 生成铁则（§4.1 原文）", ""]
+        body += [f"{i}. {r}" for i, r in enumerate(ang["rules"], 1)]
+        body += ["", "## 分镜选图规则", "",
+                 "| 分镜景别 | 优先 | 备选 |", "|---|---|---|"]
+        body += [f"| {p['shot']} | {p['first']} | {p['alt']} |" for p in ang["picks"]]
+        body += ["", "---", ""]
+        for it in items:
+            body += [f"## {it['no']} · {it['shot']}", "",
+                     f"- 机位：{it['cam']}", f"- 可见范围：{it['cover']}",
+                     f"- 出图：`{it['image'] or '（未出图）'}`", "",
+                     "```text", it["prompt_en"], "```", "",
+                     "```text", it["prompt_cn"], "```", ""]
+        md.write_text("\n".join(body), encoding="utf-8")
+
+        j = d / "angles.json"
+        j.write_text(json.dumps({"asset_id": card.id, "index_table": table,
+                                 "rules": ang["rules"], "picks": ang["picks"],
+                                 "items": items}, ensure_ascii=False, indent=2),
+                     encoding="utf-8")
+
+        return {"operation": "angles", "ok": True, "asset_id": card.id,
+                "count": len(items), "items": items, "index_table": table,
+                "notes": notes, "files": {"index": str(md), "json": str(j)}}
 
     # ── 批量（蓝图 §十八）──
 
