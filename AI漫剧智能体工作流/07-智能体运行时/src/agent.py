@@ -27,8 +27,8 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import (character_agent, costume_agent, expression_agent, pose_agent,
-               prop_agent, prompt_engine, scene_agent)
+from . import (batch as batch_mod, character_agent, costume_agent,
+               expression_agent, pose_agent, prop_agent, prompt_engine, scene_agent)
 from .asset_manager import AssetManager, now_str
 from .consistency import (ConsistencyReport, check_modify_scope, check_required,
                           check_text_risk, full_check, text_risk_checklist)
@@ -37,7 +37,7 @@ from .llm_client import LLMClient
 from .prompt_engine import build_prompts
 from .router import route
 from .rule_source import RuleSource
-from .schema import AssetCard
+from .schema import AssetCard, parse_id
 
 # ⭐ 六类资产各有一个 agent（与 `schema.ASSET_TYPE_CN` 的键一一对应）。
 #    新增一类资产 = 这里加一行 + `registry.py` 的 asset agent 输出里加一项。
@@ -142,6 +142,113 @@ class DramaAssetAgent:
             return self._modify(r, parsed, generate)
 
         return self._create(r, parsed, generate)
+
+    # ── 场景 360° 全景基准（§4.6）──
+
+    def panorama(self, text: str, *, generate: bool | None = None) -> dict:
+        """出场景的 **360° 全景空间基准**（§四·4.6）。
+
+        工作流原话：「**全景定基准 → 六角度出分镜可用图**」——
+        先出一张 360° 全景确定空间的完整布局，避免"只顾一面墙"导致后续多角度空间矛盾。
+
+        两种用法：
+          · 传 **`ENV_00X`** → 从已有场景**派生**一张全景基准卡（ID 加 `_PanoramaBase` 状态位）
+          · 传 **场景描述** → 新建场景，并直接出它的全景基准
+        """
+        t = (text or "").strip()
+        base = self.am.load(self.am.resolve_id(t)) if parse_id(t) else None
+
+        if base is not None:
+            card = AssetCard.from_dict(base.to_dict())
+            card.id = f"{base.id}_PanoramaBase"
+            card.version = "v001"
+            card.parent_asset = base.id
+            card.layout_variant = "panorama360"
+            card.updated_at = now_str()
+            card.source = f"{base.source} ｜ 360° 全景基准派生"
+            notes = [f"从 {base.id} 派生 360° 全景基准（§4.6）"]
+        else:
+            r0, parsed = route(t, self.llm, "environment")
+            aid = self.am.allocate_id("environment", note=f"360全景 {t[:30]}")
+            card = scene_agent.build_card(parsed, aid, now_str())
+            card.layout_variant = "panorama360"
+            card, notes = scene_agent.complete(card, parsed, self.rules, self.llm)
+
+        # 推荐参数（§4.6 表内为**真实参数**）—— 同时写进卡片 notes 与返回说明，
+        # 否则 CLI 只显示卡片外的那几条，用户看不到该用哪些出图参数
+        p = self.rules.panorama
+        if p.get("params"):
+            line = "§4.6 推荐参数（出图平台按此设置）：" + \
+                " · ".join(f"{k}={v}" for k, v in p["params"].items())
+            card.notes = (card.notes + " ｜ " if card.notes else "") + line
+            notes.append(line)
+
+        en, cn, neg = build_prompts(card, self.rules)
+        rep = check_required(card, self.rules)
+        result = self._maybe_generate(card, generate)
+        path = self.am.save(card)
+        pr = self.am.write_prompt(card)
+        md = self.am.write_metadata(card, result)
+        notes.append("下一步：按 `INDEX-TEMPLATES.md` §4.1 出 S01–S06 六角度，"
+                     "全部以本全景为空间参照")
+        return {"operation": "panorama", "asset_id": card.id, "type": "environment",
+                "version": card.version, "notes": notes, "card": card.to_dict(),
+                "prompt_en": en, "prompt_cn": cn, "negative": neg,
+                "images": result.image_paths, "consistency": rep,
+                "files": {"card": str(path), "prompt": str(pr), "metadata": str(md)}}
+
+    # ── 批量（蓝图 §十八）──
+
+    def plan_batch(self, text: str, *, count: int = 0, asset_type: str = ""
+                   ) -> tuple[str, list[dict]]:
+        """规划一次批量：返回 `(asset_type, 展开后的 N 条请求)`。
+
+        ⭐ 单独提出来，是为了让 **CLI 预览**与**实际执行**用**同一份规划** ——
+        否则「预览里是主角/伙伴，实际生成的是拾荒者/商队护卫」这种不一致，
+        用户根本没法判断哪边对（实测踩到：预览没传世界观，落到了通用池）。
+        """
+        if not asset_type:
+            r0, p0 = route(text, self.llm, "")
+            asset_type = r0.asset_type if r0.asset_type else "character"
+            world = p0.world or ""
+        else:
+            _, p0 = route(text, self.llm, asset_type)
+            world = p0.world or ""
+        return asset_type, batch_mod.plan(text, count=count,
+                                          asset_type=asset_type, world=world)
+
+    def batch(self, text: str, *, count: int = 0, asset_type: str = "",
+              generate: bool | None = None) -> dict:
+        """一次生成多个资产 —— 蓝图 §十八「一次生成 10 个废土 NPC」。
+
+        ⭐ **不做批量专用流水线**：把请求展开成 N 条自然语言请求，**各自走正常
+        `handle()`** —— 于是每一项都自动获得同一套 Gate / 指纹 / 版本 / 落盘，
+        不会出现「批量生成的与单个生成的不一样」这种最难查的偏差。
+        """
+        asset_type, items = self.plan_batch(text, count=count,
+                                            asset_type=asset_type)
+        results: list[dict] = []
+        for it in items:
+            try:
+                res = self.handle(it["text"], asset_type=asset_type, generate=generate)
+            except Exception as e:                                   # noqa: BLE001
+                res = {"ok": False, "error": f"{type(e).__name__}: {e}"}
+            card = res.get("card") or {}
+            results.append({
+                "index": it["index"], "label": it["label"], "text": it["text"],
+                "ok": res.get("ok") is not False and "asset_id" in res,
+                "asset_id": res.get("asset_id", ""),
+                "name": card.get("name", ""),
+                "version": res.get("version", ""),
+                "status": card.get("id_status", ""),
+                "consistency": (res.get("consistency").summary()
+                                if res.get("consistency") else ""),
+                "error": res.get("error", ""),
+                "raw": res,
+            })
+        return {"operation": "batch", "asset_type": asset_type,
+                "count": len(results), "items": results,
+                "roster": batch_mod.roster(results)}
 
     # ── 创建 ──
 

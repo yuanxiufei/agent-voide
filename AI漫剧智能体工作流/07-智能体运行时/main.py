@@ -29,7 +29,7 @@ try:
 except Exception:
     pass
 
-from src import dispatcher, handover, module_loader, registry   # noqa: E402
+from src import batch, dispatcher, handover, module_loader, registry  # noqa: E402
 from src.agent import AgentConfig, DramaAssetAgent            # noqa: E402
 from src.consistency import check_required, check_text_risk   # noqa: E402
 from src.module_loader import ModuleLoader                    # noqa: E402
@@ -254,6 +254,60 @@ def cmd_probe(a: argparse.Namespace) -> int:
     return cmd_ask(a)
 
 
+def cmd_panorama(a: argparse.Namespace) -> int:
+    """场景 360° 全景空间基准（工作流 §4.6「全景定基准 → 六角度出分镜可用图」）。"""
+    text = " ".join(a.text)
+    ag = DramaAssetAgent(AgentConfig.load(ROOT))
+    hr("🌐 场景 360° 全景基准（§4.6）")
+    print(f"  输入：{text}")
+    res = ag.panorama(text, generate=(not a.no_image))
+    if res.get("error"):
+        print(f"  ❌ {res['error']}")
+        return 2
+    hr(f"🎨 {res['asset_id']} ｜ {res['card']['name']} ｜ {res['version']}")
+    for n in res["notes"]:
+        print(f"  · {n}")
+    print()
+    print("  ── English（§4.6 模板 + [场景描述] 已替换）──")
+    for line in res["prompt_en"].splitlines():
+        if line.startswith(("SCENE:", "LAYOUT:", "MULTI-ANGLE")):
+            print("  " + line[:150])
+    print()
+    print(f"  Negative 条数：{len(res['negative'].split(', '))}"
+          f"（含 §4.6 全景反向词：{'✅' if 'perspective distortion' in res['negative'] else '❌'}）")
+    print()
+    print(f"  📦 {res['files']['card']}")
+    return 0
+
+
+def cmd_batch(a: argparse.Namespace) -> int:
+    """批量生成（蓝图 §十八：一次生成 10 个废土 NPC）。"""
+    text = " ".join(a.text)
+    ag = DramaAssetAgent(AgentConfig.load(ROOT))
+    count = a.count or batch.parse_count(text)
+    hr(f"📦 批量生成：{count} 项")
+    print(f"  请求：{text}")
+    print(f"  展开为 {count} 条独立请求，各自走正常创建流程"
+          f"（同 Gate / 指纹 / 版本 / 落盘）")
+    print()
+    # ⚠️ 预览必须用 `ag.plan_batch()`（会带上世界观）—— 直接 `batch.plan()`
+    #    会落到通用池，于是「预览是主角/伙伴、实际是拾荒者」两边不一致（实测踩到）
+    _t, preview = ag.plan_batch(text, count=count, asset_type=a.type or "")
+    for it in preview:
+        print(f"  {it['index']:>2}. {it['label']:<22s} {it['text']}")
+    print()
+    res = ag.batch(text, count=count, asset_type=a.type or "",
+                   generate=(not a.no_image))
+    hr("📋 花名册")
+    print(res["roster"])
+    if a.verbose:
+        hr("逐项一致性")
+        for it in res["items"]:
+            flag = "✅" if it["ok"] else "❌"
+            print(f"  {flag} {it['asset_id'] or '—':<26s} {it['consistency'] or it['error']}")
+    return 0
+
+
 # ─────────────────────────────────────────────────────────────
 # 七个流程 agent（通用运行时的命令）
 # ─────────────────────────────────────────────────────────────
@@ -460,6 +514,17 @@ def build_parser() -> argparse.ArgumentParser:
     pr.add_argument("text", nargs="+")
     add_gen_args(pr)
 
+    pa = sub.add_parser("panorama", help="场景 360° 全景空间基准（§4.6）")
+    pa.add_argument("text", nargs="+", help="场景描述，或已有 ENV_00X（派生全景基准卡）")
+    pa.add_argument("--no-image", action="store_true")
+    pa.add_argument("--provider", choices=["mock", "openai", "stability"])
+
+    ba = sub.add_parser("batch", help="批量生成（蓝图 §十八：一次 10 个 NPC）")
+    ba.add_argument("text", nargs="+")
+    ba.add_argument("--count", type=int, default=0, help="数量（默认从输入里的「N个」取，否则 10）")
+    ba.add_argument("-v", "--verbose", action="store_true", help="逐项打印一致性")
+    add_gen_args(ba)
+
     ls = sub.add_parser("list", help="列出资产库")
     ls.add_argument("--type", choices=["character", "costume", "prop", "environment"])
     ls.add_argument("--world", help="按世界观过滤，如 wasteland")
@@ -515,12 +580,14 @@ def main() -> int:
         parser.print_help()
         return 0
     # 无子命令时默认走 ask（支持 `python main.py "一个废土女佣兵"` 的直白用法）
-    if argv[0] not in ("ask", "probe", "list", "show", "rules", "export", "doctor",
-                       "agents", "outline", "run", "init", "route", "handover",
-                       "gate", "doc", "-h", "--help"):
+    if argv[0] not in ("ask", "probe", "batch", "panorama", "list", "show",
+                       "rules", "export", "doctor", "agents", "outline", "run",
+                       "init", "route", "handover", "gate", "doc", "-h", "--help"):
         argv = ["ask"] + argv
     a = parser.parse_args(argv)
-    fn = {"ask": cmd_ask, "probe": cmd_probe, "list": cmd_list, "show": cmd_show,
+    fn = {"ask": cmd_ask, "probe": cmd_probe, "batch": cmd_batch,
+          "panorama": cmd_panorama,
+          "list": cmd_list, "show": cmd_show,
           "rules": cmd_rules, "export": cmd_export, "doctor": cmd_doctor,
           "agents": cmd_agents, "outline": cmd_outline, "run": cmd_run,
           "init": cmd_init, "route": cmd_route, "handover": cmd_handover,

@@ -172,6 +172,13 @@ def _fill_scene_seg(seg: str, sd) -> str:
     return re.sub(r"\[[^\]]*\]", "", seg).replace(", ,", ",").strip()
 
 
+def _scene_keywords(sd) -> str:
+    """把 SceneDNA 压成一句「[场景描述]」——供全景模板的占位符替换。"""
+    return _join([pick(sd.building_en, sd.building),
+                  pick(sd.materials_en, sd.materials),
+                  pick(sd.atmosphere_en, sd.atmosphere)])
+
+
 def _layout_block(rules, card) -> tuple[str, str]:
     """返回 (版式段, 一致性段)。各类资产用**各自**的标准段。
 
@@ -179,6 +186,20 @@ def _layout_block(rules, card) -> tuple[str, str]:
     才能填掉工作流骨架里的占位符；表情/动作版式需要 `sheet_dna` 的网格与表项。
     """
     asset_type = card.type
+
+    # ── 场景 · 360° 全景基准（§4.6）──
+    if asset_type == "environment" and card.layout_variant == "panorama360":
+        p = rules.panorama
+        seg = (p.get("en") or "").replace(
+            "[scene description]", _scene_keywords(card.scene_dna)).replace(
+            "[场景描述]", _scene_keywords(card.scene_dna))
+        layout = f"LAYOUT: {seg}"
+        cons = ("CONSISTENCY: this panorama is the SPATIAL BASELINE for the scene — "
+                "architecture, doors and windows, furniture, floor, light sources and the "
+                "main spatial relationship must be locked, and all later angles (S01–S06) "
+                "must be derived from it. Weather, time of day, characters, light state and "
+                "prop placement may vary between later renders.")
+        return layout, cons
 
     if asset_type == "environment":
         # ⚠️ 场景**不使用纯白背景**（§四 明文），故整段（含背景）都与前三类不同
@@ -335,9 +356,14 @@ def build_prompt_en(card: AssetCard, rules) -> str:
     # ── 场景（ENV_）：字段与其它三类完全不同，用 SceneDNA ──
     if card.type == "environment":
         sd = card.scene_dna
+        pano = card.layout_variant == "panorama360"
         parts = [
-            "Create a professional cinematic ENVIRONMENT concept design for an "
-            "AI-animation / game production art library.",
+            ("Create a 360° equirectangular panorama of a cinematic environment for an "
+             "AI-animation / game production art library — this is the SPATIAL BASELINE of "
+             "the scene, from which all later camera angles are derived."
+             if pano else
+             "Create a professional cinematic ENVIRONMENT concept design for an "
+             "AI-animation / game production art library."),
             f"SCENE: {pick(sd.name_en, card.name) or 'environment'}"
             + (f" ({tr(card.world)})" if card.world else ""),
             "ARCHITECTURE: " + _join([pick(sd.building_en, sd.building),
@@ -486,8 +512,11 @@ def build_prompt_cn(card: AssetCard) -> str:
     # ── 场景（ENV_）──
     if card.type == "environment":
         sd = card.scene_dna
+        pano = card.layout_variant == "panorama360"
         lines = [
-            "【场景资产图】电影级环境概念设计，用于 AI 漫剧资产库",
+            ("【场景空间基准 · 360° 全景】等距柱状投影，用于确定空间完整布局"
+             if pano else
+             "【场景资产图】电影级环境概念设计，用于 AI 漫剧资产库"),
             f"场景：{' / '.join(x for x in [card.name, tr(card.world)] if x)}",
             f"建筑：{_join([sd.building, sd.architectural_style])}",
             f"空间与尺度：{_join([sd.spatial_scale, sd.scale_vs_character])}",
@@ -579,6 +608,14 @@ def build_prompts(card: AssetCard, rules, *, failures: list[str] | None = None
         for t in rules.scene_negative:
             if t and t not in neg:
                 neg = f"{neg}, {t}"
+        # 360° 全景：再追加 §4.6 的反向提示词。
+        # ⚠️ 原文该块是**中英双写**的；生图用英文行 → 只取不含中文的项，
+        #    否则会把整段中文负面词塞进英文 negative。
+        if card.layout_variant == "panorama360":
+            for t in (rules.panorama.get("negative") or "").split(","):
+                t = t.strip()
+                if t and not any("\u4e00" <= ch <= "\u9fff" for ch in t) and t not in neg:
+                    neg = f"{neg}, {t}"
 
     # 表情 / 动作：追加库 §三 产线规范里的固定负面词
     if card.type == "expression":

@@ -128,7 +128,8 @@ REGISTRY: list[AgentSpec] = [
             "02-服化道/模板/PROJECT_STATE.yaml",
         ],
         outputs=["VISUAL_BIBLE", "角色资产", "服装资产", "道具资产", "场景资产",
-                 "表情集 EXP_", "动作集 POS_", "风格锁定表"],
+                 "场景 360° 全景基准（§4.6）", "表情集 EXP_", "动作集 POS_",
+                 "风格锁定表", "批量生产（§十八）"],
         gate="资产门禁",
         gate_checks=[
             GateCheck("VISUAL_BIBLE 锁定", ["VISUAL_BIBLE", "视觉圣经"]),

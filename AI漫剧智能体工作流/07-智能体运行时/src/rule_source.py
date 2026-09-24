@@ -371,6 +371,69 @@ class RuleSource:
         self._cache["neg_scene"] = terms
         return terms  # type: ignore[return-value]
 
+    # ── 场景 360° 全景基准（§4.6）──
+    @property
+    def panorama(self) -> dict:
+        """§四·4.6 场景空间基准方案：360° 全景。
+
+        工作流原话：「**全景定基准 → 六角度出分镜可用图**」——
+        先出一张 360° 全景确定**空间的完整布局**，避免"只顾一面墙"导致后续多角度空间矛盾。
+
+        ⚠️ 解析按**标签定位**（「中文正向模板」/「英文正向模板」/「反向提示词」），
+        不要按"第 N 个代码块"——该节里还夹着用途引用、参数表、技术要点，
+        按序号取会在原文微调后**静默取错**（同 §2.3/§3.3 的教训）。
+        """
+        if "pano" in self._cache:
+            return self._cache["pano"]  # type: ignore[return-value]
+        t = self.raw("turnaround")
+        i = _find_heading(t, "360° 全景")
+        seg = "\n".join(_lines(t)[i:]) if i >= 0 else t
+
+        def _norm(s: str) -> str:
+            """折叠**重复逗号**并压空白。
+
+            ⚠️ 原文的模板是**多行**的，且行尾/行首各自带逗号：
+                    8K超高清,
+                    高动态范围HDR,
+                逐行 strip 后再用 ", " 拼接 → 变成 `8K超高清,, 高动态范围HDR`（实测踩到）。
+            """
+            s = re.sub(r"\s*,(\s*,)+", ", ", s)
+            s = re.sub(r"\s+", " ", s)
+            return s.strip(" ,")
+
+        def block_after(label: str) -> str:
+            """按**标签**取其后第一个代码块（不按序号 —— 见 docstring 的说明）。"""
+            ls = _lines(seg)
+            for k, l in enumerate(ls):
+                if label in l:
+                    out: list[str] = []
+                    for j in range(k + 1, len(ls)):
+                        if ls[j].lstrip().startswith("```"):
+                            if out:
+                                break
+                            continue
+                        if out or ls[j].strip():
+                            out.append(ls[j].strip())
+                    return _norm(" ".join(x for x in out if x))
+            return ""
+
+        params: dict[str, str] = {}
+        if i >= 0:
+            # 去掉 markdown 反引号（表里形如 `` `5824×2880`（2:1） ``）——
+            # 留着会显示成「分辨率=5824×2880`（2:1）」
+            params = {r.get("项", ""): (r.get("值", "") or "").replace("`", "")
+                      for r in _table_after(t, i)}
+
+        self._cache["pano"] = {
+            "cn": block_after("中文正向模板"),
+            "en": block_after("英文正向模板"),
+            "negative": block_after("反向提示词"),
+            "params": {k: v for k, v in params.items() if k},
+            "usage": [l.strip("- ").strip() for l in _lines(seg)
+                      if l.strip().startswith(("1.", "2.", "3."))],
+        }
+        return self._cache["pano"]  # type: ignore[return-value]
+
     # ── 文字屏蔽（RULE-005）──
     @property
     def text_block_positive(self) -> str:

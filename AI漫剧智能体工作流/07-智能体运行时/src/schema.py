@@ -329,6 +329,10 @@ class AssetCard:
     scene_dna: SceneDNA = field(default_factory=SceneDNA)
     sheet_dna: SheetDNA = field(default_factory=SheetDNA)
 
+    # 版式变体：`standard`（默认）| `panorama360`（§4.6 场景空间基准方案）
+    # 全景不是"另一种画风"，而是**空间基准底板** —— 先出它定布局，再出常规图。
+    layout_variant: str = "standard"
+
     locked: list[str] = field(default_factory=list)
     editable: list[str] = field(default_factory=list)
 
