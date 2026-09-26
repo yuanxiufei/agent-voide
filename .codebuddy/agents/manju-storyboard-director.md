@@ -7,7 +7,7 @@ enabled: true
 enabledAutoRun: true
 ---
 
-> 生成自 `智能体搭建参考md/分镜导演助手｜完整智能体迁移配置_Markdown.md`（由 `.codebuddy/agents/_build.py` 逐字移植）。**改规则请改源规格后重新生成。**
+> 生成自 `智能体搭建参考md/分镜导演助手_完整迁移配置.md`（由 `.codebuddy/agents/_build.py` 逐字移植）。**改规则请改源规格后重新生成。**
 > 服务模块 **03** ｜ `agentMode: agentic`（**自动可调用**）
 
 # 分镜导演助手【先出分镜再出图】

@@ -7,7 +7,7 @@ enabled: true
 enabledAutoRun: true
 ---
 
-> 生成自 `智能体搭建参考md/AI漫剧资产库角色道具｜完整智能体迁移配置.md`（由 `.codebuddy/agents/_build.py` 逐字移植）。**改规则请改源规格后重新生成。**
+> 生成自 `智能体搭建参考md/AI漫剧资产库角色道具_完整迁移配置.md`（由 `.codebuddy/agents/_build.py` 逐字移植）。**改规则请改源规格后重新生成。**
 > 服务模块 **02** ｜ `agentMode: manual`（**手动选** —— 同模块已有一个自动可调用的 agent，两者职责重叠，同时参与自动调用会让同一句话走两条路、**行为不确定**）
 
 # AI漫剧资产库角色道具智能体

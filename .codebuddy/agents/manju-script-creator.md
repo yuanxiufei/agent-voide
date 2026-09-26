@@ -7,7 +7,7 @@ enabled: true
 enabledAutoRun: true
 ---
 
-> 生成自 `智能体搭建参考md/AI剧本创作｜2分钟AI漫剧工业化导演与爆款编剧智能体完整迁移版.md`（由 `.codebuddy/agents/_build.py` 逐字移植）。**改规则请改源规格后重新生成。**
+> 生成自 `智能体搭建参考md/AI剧本创作_完整迁移配置.md`（由 `.codebuddy/agents/_build.py` 逐字移植）。**改规则请改源规格后重新生成。**
 > 服务模块 **01** ｜ `agentMode: agentic`（**自动可调用**）
 
 # AI剧本创作

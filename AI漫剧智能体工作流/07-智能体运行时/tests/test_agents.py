@@ -179,10 +179,16 @@ def main() -> int:
             #     ② 有人手改了生成物 → 下次生成会被覆盖，改动**静默丢失**。
             it = by_name.get(p.stem)
             if it:
-                want, _, _ = BUILD.render(it)
-                check("生成物 == 按源规格重算（逐字）",
-                      t.replace("\r\n", "\n") == want,
-                      "不一致 → 跑 `python .codebuddy/agents/_build.py` 重新生成")
+                try:
+                    want, _, _ = BUILD.render(it)
+                except FileNotFoundError as e:
+                    # 源规格被改名/移走 → 给**干净**的失败信息，而不是崩栈
+                    check("生成物 == 按源规格重算（逐字）", False,
+                          f"源规格读不到：{e} → 源文件改名后需同步 `_build.py` 的 SOURCES")
+                else:
+                    check("生成物 == 按源规格重算（逐字）",
+                          t.replace("\r\n", "\n") == want,
+                          "不一致 → 跑 `python .codebuddy/agents/_build.py` 重新生成")
             check("正文未夹入本仓库专属路径（移植型应自包含）",
                   "AI漫剧智能体工作流" not in body)
 
