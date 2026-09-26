@@ -788,6 +788,17 @@ MECHANISM_RULES = [
         "keyword": "已知歧义",
         "must_in": ["07-智能体运行时/README.md"],
     },
+    # ── 项目级子智能体（.codebuddy/agents/，2026-09-26）──
+    {
+        "name": "07 运行时：子智能体的**裂解原则**（有工具的 agent 只给路径、不内联规则）",
+        "keyword": "同一份规格，两种加载方式",
+        "must_in": ["07-智能体运行时/README.md"],
+    },
+    {
+        "name": "07 运行时：子智能体校验含「路径唯一性」",
+        "keyword": "test_agents.py",
+        "must_in": ["07-智能体运行时/README.md"],
+    },
     # ── 风格锚点表的**权威来源**（2026-09-24 订正）──
     # 原先（§六 / 根 README / ID-REGISTRY）都指向 `TURNAROUND-STANDARD.md` §七，
     # 而 §七 是「光影设计的三个来源与分工」—— 实为**差一节**：画质参数与
@@ -1293,24 +1304,28 @@ def check_assets(files):
                 "should_be": f"补回至 ≥ {min_n} 个",
             })
 
-    # 工作区级素材：仅在 data/ 存在时核对（库被拷到别处则跳过）
-    data_dir = os.path.join(WORKSPACE, "data")
-    if os.path.isdir(data_dir):
-        # 只按「文件名」递归匹配，不绑定目录结构
-        # ——用户会整理 data/ 布局（如把规格移入 智能体搭建参考md/），
-        #   硬编码路径会反复失效，而本检查的目的是「防丢内容」而非「防移位置」
-        names = set()
-        for _, _, fns in os.walk(data_dir):
-            names.update(fns)
-        for req in REQUIRED_WORKSPACE_FILES:
-            if req not in names:
-                failures.append({
-                    "rule": "原始规格缺失",
-                    "file": f"data/**/{req}",
-                    "line": 0,
-                    "text": "工作区 data/ 下未搜到该原始规格（是否被误删？）",
-                    "should_be": "恢复该文件",
-                })
+    # 工作区级素材：按**文件名**在整个工作区递归核对
+    #
+    # ⚠️⚠️ 判据是「**内容在不在**」，不是「**在不在 `data/`**」。
+    #   本检查第一版只在 `data/` 下搜 —— 而它**自己的注释**就写着
+    #   「用户会整理 …（如把规格移入 智能体搭建参考md/）」。
+    #   实测后果（2026-09-26）：用户把那 6 份原始规格整理到了仓库根的
+    #   `智能体搭建参考md/`，于是**6 份全报"被误删"**，而它们好好地在。
+    #   **检查器的误报和代码 bug 一样耗人** —— 它会逼你去"恢复"一个没丢的文件。
+    #   故改为全工作区按文件名核对（跳过 SKIP_DIRS 与点目录）。
+    names = set()
+    for _dp, _dns, _fns in os.walk(WORKSPACE):
+        _dns[:] = [d for d in _dns if d not in SKIP_DIRS and not d.startswith(".")]
+        names.update(_fns)
+    for req in REQUIRED_WORKSPACE_FILES:
+        if req not in names:
+            failures.append({
+                "rule": "原始规格缺失",
+                "file": req,
+                "line": 0,
+                "text": f"整个工作区都未搜到该原始规格（是否被误删？）",
+                "should_be": "恢复该文件（放在 data/ 或 智能体搭建参考md/ 均可）",
+            })
     return failures
 
 
