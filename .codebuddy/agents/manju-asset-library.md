@@ -2,12 +2,13 @@
 name: manju-asset-library
 description: AI 漫剧资产库（角色 / 道具设定图）- 当需要生成**标准化、可复用、高一致性**的角色或道具设定图时使用，覆盖自动补全（年龄 / 面部 / 发型 / 服装材质 / 配色 / 装备 / 特殊身体特征）与固定版式（16:9，左侧人物特写 + 右侧正侧背三视图）。例：「红发女骑士角色设定图」「出一把赛博朋克武士刀的道具设定图」。产出补全后的设定 + 标准画布 + 提示词 + 图像。
 tools: read_file, write_to_file, replace_in_file, search_file, search_content, list_dir, image_gen
-agentMode: agentic
+agentMode: manual
 enabled: true
 enabledAutoRun: true
 ---
 
-> 生成自 `智能体搭建参考md/AI漫剧资产库角色道具｜完整智能体迁移配置.md`（由 `.codebuddy/agents/_build.py` 逐字移植）。**改规则请改源规格后重新生成**。
+> 生成自 `智能体搭建参考md/AI漫剧资产库角色道具｜完整智能体迁移配置.md`（由 `.codebuddy/agents/_build.py` 逐字移植）。**改规则请改源规格后重新生成。**
+> 服务模块 **02** ｜ `agentMode: manual`（**手动选** —— 同模块已有一个自动可调用的 agent，两者职责重叠，同时参与自动调用会让同一句话走两条路、**行为不确定**）
 
 # AI漫剧资产库角色道具智能体
 

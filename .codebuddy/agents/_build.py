@@ -51,36 +51,42 @@ SOURCES: list[dict[str, str]] = [
         "name": "manju-script-creator",
         "desc": "AI 漫剧剧本创作（2 分钟工业化短剧）- 当需要把原始故事 / 小说 / 一句话创意做成**可投产的 2 分钟 AI 漫剧剧本**时使用，覆盖工业化分集、10 大记忆点角色、每角色 10 项记忆资产、爆款标签、群像差异化、情绪线与黑化/成长/反转路线。例：「把这部小说改编成 AI 漫剧」「给我一份 40 集分集大纲」「这个主角怎么做出记忆点」。产出剧本 + 全人物总建模 + 分集结构 + 视觉统一方案。",
         "tools": "read_file, write_to_file, replace_in_file, search_file, search_content, list_dir",
+        "module": "01", "mode": "agentic",
     },
     {
         "src": "AI漫剧服化道智能体_FULL_PORTABLE_AGENT_SPEC_V2.md",
         "name": "manju-costume-prop-engine",
         "desc": "AI 漫剧服化道引擎（FULL PORTABLE AGENT SPEC V2.0）- 当需要把小说 / 剧本**视觉化**成世界观、角色三视图、服装、道具、场景、表情、动作资产时使用，覆盖锁定系统、局部修改、版本控制、一致性检查与中英双语提示词。例：「女刺客，黑衣，赛博朋克」「给这个角色出三视图」「只改她的发色」。产出视觉资产 + 一致性锁定 + 双语提示词。",
         "tools": "read_file, write_to_file, replace_in_file, search_file, search_content, list_dir, image_gen",
+        "module": "02", "mode": "manual",
     },
     {
         "src": "AI漫剧资产库角色道具｜完整智能体迁移配置.md",
         "name": "manju-asset-library",
         "desc": "AI 漫剧资产库（角色 / 道具设定图）- 当需要生成**标准化、可复用、高一致性**的角色或道具设定图时使用，覆盖自动补全（年龄 / 面部 / 发型 / 服装材质 / 配色 / 装备 / 特殊身体特征）与固定版式（16:9，左侧人物特写 + 右侧正侧背三视图）。例：「红发女骑士角色设定图」「出一把赛博朋克武士刀的道具设定图」。产出补全后的设定 + 标准画布 + 提示词 + 图像。",
         "tools": "read_file, write_to_file, replace_in_file, search_file, search_content, list_dir, image_gen",
+        "module": "02", "mode": "manual",
     },
     {
         "src": "Suno_歌词大师｜完整智能体迁移配置.md",
         "name": "manju-suno-lyric-master",
         "desc": "Suno 歌词大师 - 当需要为 AI 漫剧 / 短剧写**可直接投给 Suno 的完整歌曲**时使用，覆盖歌词结构、押韵、Hook 与副歌规则、Suno 标记、Style Prompt 组成与禁忌、曲风模板、情绪递进、中英混写与商业流行优化。例：「给这部剧写一首主题曲」「一句话主题扩写成完整歌曲」「帮这段歌词配 Style Prompt」。产出歌词 + 结构标记 + Style Prompt。",
         "tools": "read_file, write_to_file, replace_in_file, search_file, search_content, list_dir",
+        "module": "05", "mode": "agentic",
     },
     {
         "src": "分镜导演助手｜完整智能体迁移配置_Markdown.md",
         "name": "manju-storyboard-director",
         "desc": "AI 漫剧分镜导演【先出分镜再出图】- 当需要把文字内容转成**可拍摄的视觉设计**时使用，按三阶段走：纯视觉 Storyboard → 专业镜头拆解 → AI 图像提示词，覆盖景别 / 机位 / 构图 / 运镜 / 光影 / 颜色 / 氛围，以及人物 Identity Lock 与场景 Environment Lock。例：「把这一场做成分镜」「这场戏需要几个镜头」「按分镜出图提示词」。产出视觉分镜 + 镜头拆解 + AI 提示词。",
         "tools": "read_file, write_to_file, replace_in_file, search_file, search_content, list_dir",
+        "module": "03", "mode": "agentic",
     },
     {
         "src": "调音大师班｜完整智能体迁移配置_Markdown.md",
         "name": "manju-audio-tuning-master",
         "desc": "AI 漫剧调音大师班（声音设计）- 当需要做人物声线设计、环境声音、道具 Foley 或剧情声音表现时使用，覆盖年龄感 / 气息 / 颗粒感 / 情绪张力 / 语速 / 停顿 / 空间与收音 / 低频 / 特殊音色，以及标准化声音提示词结构。例：「给女主选个声线」「这段该配什么环境声」「这个人物的人声提示词怎么写」。产出声音设计方案 + 声音提示词。",
         "tools": "read_file, write_to_file, replace_in_file, search_file, search_content, list_dir",
+        "module": "05", "mode": "agentic",
     },
 ]
 
@@ -107,12 +113,20 @@ def build_one(item: dict, preview: bool) -> tuple[str, int, int]:
     # 正文 = 源规格**逐字**（保留其 H1 与「用途/适用」元信息 —— 那是给智能体自己看的）
     body = text.rstrip() + "\n"
 
-    # 出处注记放**正文最前**（一行）—— 便于将来追源，且进 System Prompt 也不浪费
-    prov = (f"> 生成自 `智能体搭建参考md/{src.name}`（由 `.codebuddy/agents/_build.py` "
-            f"逐字移植）。**改规则请改源规格后重新生成**。\n\n")
+    # 出处注记放**正文最前**（两行）—— 便于追源，且让"这个 agent 是自动还是手动"**可见**。
+    # ⚠️ 「服务模块」与「模式」写成**机器可读**的形式（`服务模块 **01** ｜ agentMode: manual），
+    #    供 `tests/test_agents.py` 校验「**每个模块的自动可调用 agent 恰好一个**」——
+    #    不另立一张映射表（那会和工作流的"单一权威"原则冲突，且必然漂移）。
+    manual = item["mode"] == "manual"
+    tail = ("（**手动选** —— 同模块已有一个自动可调用的 agent，两者职责重叠，"
+            "同时参与自动调用会让同一句话走两条路、**行为不确定**）"
+            if manual else "（**自动可调用** —— 本模块唯一的自动入口）")
+    prov = (f"> 生成自 `智能体搭建参考md/{src.name}`"
+            f"（由 `.codebuddy/agents/_build.py` 逐字移植）。**改规则请改源规格后重新生成。**\n"
+            f"> 服务模块 **{item['module']}** ｜ `agentMode: {item['mode']}`{tail}\n\n")
 
     vals = {FIELD_MAP[k]: item[k] for k in FIELD_MAP}
-    vals.update({"agentMode": "agentic", "enabled": "true",
+    vals.update({"agentMode": item["mode"], "enabled": "true",
                  "enabledAutoRun": "true"})
     fm = "\n".join(f"{k}: {yaml_value(str(vals[k]))}" for k in FRONT_KEYS)
     out = f"---\n{fm}\n---\n\n{prov}{body}"
@@ -136,9 +150,14 @@ def main() -> int:
         name, n, secs = build_one(it, a.preview)
         total += n
         flag = "（预览）" if a.preview else ""
-        print(f"  ✅ {name:30s} 正文 {n:6d} 字符 ｜ {secs:3d} 个标题 {flag}")
+        tag = "手动" if it["mode"] == "manual" else "自动"
+        print(f"  ✅ {name:30s} 模块{it['module']} {tag} 正文 {n:6d} 字符 "
+              f"｜ {secs:3d} 个标题 {flag}")
     print()
     print(f"  合计正文 {total} 字符（≈ {total / 1024:.0f} KB）")
+    auto = sum(1 for it in SOURCES if it["mode"] == "agentic")
+    print(f"  自动可调用 {auto} 个 · 手动 {len(SOURCES) - auto} 个"
+          f"（自动的需与联动型一起满足「每模块恰好一个」，见 test_agents.py）")
     print(f"  校验：python AI漫剧智能体工作流/07-智能体运行时/tests/test_agents.py")
     return 0
 

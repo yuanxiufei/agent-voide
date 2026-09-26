@@ -2,12 +2,13 @@
 name: manju-costume-prop-engine
 description: AI 漫剧服化道引擎（FULL PORTABLE AGENT SPEC V2.0）- 当需要把小说 / 剧本**视觉化**成世界观、角色三视图、服装、道具、场景、表情、动作资产时使用，覆盖锁定系统、局部修改、版本控制、一致性检查与中英双语提示词。例：「女刺客，黑衣，赛博朋克」「给这个角色出三视图」「只改她的发色」。产出视觉资产 + 一致性锁定 + 双语提示词。
 tools: read_file, write_to_file, replace_in_file, search_file, search_content, list_dir, image_gen
-agentMode: agentic
+agentMode: manual
 enabled: true
 enabledAutoRun: true
 ---
 
-> 生成自 `智能体搭建参考md/AI漫剧服化道智能体_FULL_PORTABLE_AGENT_SPEC_V2.md`（由 `.codebuddy/agents/_build.py` 逐字移植）。**改规则请改源规格后重新生成**。
+> 生成自 `智能体搭建参考md/AI漫剧服化道智能体_FULL_PORTABLE_AGENT_SPEC_V2.md`（由 `.codebuddy/agents/_build.py` 逐字移植）。**改规则请改源规格后重新生成。**
+> 服务模块 **02** ｜ `agentMode: manual`（**手动选** —— 同模块已有一个自动可调用的 agent，两者职责重叠，同时参与自动调用会让同一句话走两条路、**行为不确定**）
 
 # AI漫剧服化道智能体｜FULL PORTABLE AGENT SPEC V2.0
 

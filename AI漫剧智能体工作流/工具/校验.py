@@ -799,6 +799,16 @@ MECHANISM_RULES = [
         "keyword": "test_agents.py",
         "must_in": ["07-智能体运行时/README.md"],
     },
+    {
+        "name": "07 运行时：子智能体「自动入口名册」（防同职责两个自动入口）",
+        "keyword": "自动入口名册",
+        "must_in": ["07-智能体运行时/README.md"],
+    },
+    {
+        "name": "07 运行时：子智能体选了哪个的**判据**要写明",
+        "keyword": "有代码支撑的留联动型",
+        "must_in": ["07-智能体运行时/README.md"],
+    },
     # ── 风格锚点表的**权威来源**（2026-09-24 订正）──
     # 原先（§六 / 根 README / ID-REGISTRY）都指向 `TURNAROUND-STANDARD.md` §七，
     # 而 §七 是「光影设计的三个来源与分工」—— 实为**差一节**：画质参数与

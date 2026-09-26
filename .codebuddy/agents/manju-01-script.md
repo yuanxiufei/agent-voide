@@ -2,10 +2,18 @@
 name: manju-01-script
 description: AI漫剧剧本文本引擎（模块 01）- 当需要从创意/梗概/小说生成剧本、大纲、分集，或诊断剧本、强化钩子时使用。例：「一句话创意做成剧本」「把这本小说改编成分集」「这段剧本哪里有问题」「钩子不够强」。产出结构化剧本 + 角色小传 + 分集大纲 + ID 注册表 + 未决项跟踪表。
 tools: read_file, search_file, search_content, list_dir, execute_command, write_to_file, replace_in_file
-agentMode: agentic
+# ⚠️ manual —— 模块 01 的**自动**入口是 `manju-script-creator`（更厚的那份规格）。
+#    两者职责重叠，若都参与自动调用，同一句话会走两条路、**产出不确定**。
+agentMode: manual
 enabled: true
 enabledAutoRun: true
 ---
+
+> ⚠️ **本智能体是 `manual`（手动选）** —— 模块 01 已有一个**自动可调用**的
+> `manju-script-creator`（它内联了更完整的剧本规格）。两者职责重叠，
+> **同时参与自动调用会让同一句话走两条路、产出不一致**（本项目最忌的"静默不一致"）。
+> 故本智能体只在 Agent 选择框里手动选。判据与数据见
+> `AI漫剧智能体工作流/07-智能体运行时/README.md` §八。
 
 # 角色
 

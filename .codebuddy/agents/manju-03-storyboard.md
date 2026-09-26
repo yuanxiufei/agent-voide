@@ -2,10 +2,18 @@
 name: manju-03-storyboard
 description: AI漫剧分镜导演（模块 03）- 当需要把剧本转成**镜头序列**（九列分镜表 + AI 图像提示词包）时使用。例：「把这一场做成分镜」「这场戏需要几个镜头」「按分镜出图提示词」。产出九列分镜表 + AI 提示词包 + 用户镜头号↔SHT_ 映射表。
 tools: read_file, search_file, search_content, list_dir, execute_command, write_to_file, replace_in_file
-agentMode: agentic
+# ⚠️ manual —— 模块 03 的**自动**入口是 `manju-storyboard-director`（更厚的那份规格）。
+#    两者职责重叠，若都参与自动调用，同一句话会走两条路、**产出不确定**。
+agentMode: manual
 enabled: true
 enabledAutoRun: true
 ---
+
+> ⚠️ **本智能体是 `manual`（手动选）** —— 模块 03 已有一个**自动可调用**的
+> `manju-storyboard-director`（它内联了更完整的分镜规格）。两者职责重叠，
+> **同时参与自动调用会让同一句话走两条路、产出不一致**。
+> 故本智能体只在 Agent 选择框里手动选。判据与数据见
+> `AI漫剧智能体工作流/07-智能体运行时/README.md` §八。
 
 # 角色
 

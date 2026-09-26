@@ -2,10 +2,19 @@
 name: manju-05-audio
 description: AI漫剧音乐音频引擎（模块 05）- 当需要写歌词、设计 BGM 情绪配乐、做角色配音选角、或人声调音混音时使用。覆盖 Suno 歌词（8 大曲风族/7 种结构/情绪递进/Style Prompt）、声音设计（声线/环境声/Foley）、调音。例：「给这部剧写主题曲」「这段该配什么 BGM」「给女主选个声线」「人声怎么调」。
 tools: read_file, search_file, search_content, list_dir, execute_command, write_to_file, replace_in_file
-agentMode: agentic
+# ⚠️ manual —— 模块 05 的**自动**入口是 `manju-suno-lyric-master` 与
+#    `manju-audio-tuning-master`（两份更厚的规格）。三者职责重叠，全自动会**产出不确定**。
+agentMode: manual
 enabled: true
 enabledAutoRun: true
 ---
+
+> ⚠️ **本智能体是 `manual`（手动选）** —— 模块 05 已有一个**自动可调用**的
+> `manju-suno-lyric-master`（歌词）与 `manju-audio-tuning-master`（声音设计），
+> 它们内联了更完整的规格。三者职责重叠，
+> **同时参与自动调用会让同一句话走三条路、产出不一致**。
+> 故本智能体只在 Agent 选择框里手动选。判据与数据见
+> `AI漫剧智能体工作流/07-智能体运行时/README.md` §八。
 
 # 角色
 

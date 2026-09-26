@@ -7,7 +7,8 @@ enabled: true
 enabledAutoRun: true
 ---
 
-> 生成自 `智能体搭建参考md/调音大师班｜完整智能体迁移配置_Markdown.md`（由 `.codebuddy/agents/_build.py` 逐字移植）。**改规则请改源规格后重新生成**。
+> 生成自 `智能体搭建参考md/调音大师班｜完整智能体迁移配置_Markdown.md`（由 `.codebuddy/agents/_build.py` 逐字移植）。**改规则请改源规格后重新生成。**
+> 服务模块 **05** ｜ `agentMode: agentic`（**自动可调用** —— 本模块唯一的自动入口）
 
 # 调音大师班
 

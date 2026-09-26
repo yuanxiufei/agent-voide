@@ -69,6 +69,7 @@ def main() -> int:
     #     必须能**追溯源规格**；不能拿本仓库的路径规则去要求它。
     linked = [p for p in files if re.match(r"^manju-0\d-", p.name)]
     ported = [p for p in files if p not in linked]
+    modules: dict[str, list[tuple[str, str]]] = {}      # 模块号 → [(agent 文件, agentMode)]
     check(f"联动型子智能体 {len(linked)} 个（期望 7：00–06）", len(linked) == 7, str(len(linked)))
     check(f"移植型子智能体 {len(ported)} 个（期望 6：参考 md 逐字移植）",
           len(ported) == 6, str(len(ported)))
@@ -142,6 +143,11 @@ def main() -> int:
             # ⭐ 命令必须真实存在（写了不存在的命令 = 误导 agent）
             for c in sorted(set(re.findall(r"main\.py\s+([a-z0-9\-]+)", body))):
                 check(f"命令存在: main.py {c}", c in cmds)
+            # 收集「模块 → agent」（联动型从**文件名**取模块号）
+            m_link = re.match(r"^manju-(\d\d)-", p.name)
+            if m_link:
+                modules.setdefault(m_link.group(1), []).append(
+                    (p.name, fm.get("agentMode", "")))
         else:
             # ⭐ 移植型：必须能**追溯到源规格**（否则"改了源文件却没重生成"无从发现）
             m_src = re.search(r"生成自 `智能体搭建参考md/([^`]+)`", body)
@@ -157,6 +163,62 @@ def main() -> int:
             check(f"正文规模合理（> 5000 字符，实测 {len(body)}）", len(body) > 5000)
             check("正文未夹入本仓库专属路径（移植型应自包含）",
                   "AI漫剧智能体工作流" not in body)
+
+            # 收集「模块 → agent」（移植型从正文的 `服务模块 **NN**` 取 —— 机器可读）
+            m_port = re.search(r"服务模块 \*\*(\d\d)\*\*", body)
+            check("正文声明了**服务模块**（机器可读，供下面那条不变量用）",
+                  bool(m_port), str(m_port))
+            if m_port:
+                modules.setdefault(m_port.group(1), []).append(
+                    (p.name, fm.get("agentMode", "")))
+
+    # ⭐⭐ 核心不变量：**自动入口必须是"名册里登记的那几个"**
+    #
+    #   风险（实测）：主 Agent 按 `description` 挑；若同一职责有两个 agentic agent，
+    #   **同一句话会走两条路、产出不一致** —— 不报错、不复现，是最难查的一类问题。
+    #
+    #   ⚠️ 但不能简单断言"每模块恰好一个" —— 实测：模块 05 的两份规格**职责本就互斥**
+    #      （`manju-suno-lyric-master` 管**写歌**；`manju-audio-tuning-master` 管
+    #      **声线 / 环境声 / Foley / 调音**），两个自动入口是**合理**的。
+    #      把"恰好一个"当铁律会**逼着把互斥的职责合并或砍掉**（我第一版就这么写了，
+    #      当场被这条规则自己抓出来）。
+    #
+    #   故改为**名册**：新增/移动自动入口必须**改这张表**（即人工确认过职责不重叠）。
+    #   这不是"第二权威"—— 它正是**测试的预期**；现实偏离就红。
+    EXPECTED_AUTO = {
+        "00": {"manju-00-orchestrator.md"},
+        "01": {"manju-script-creator.md"},                       # 与工作流零重叠且厚得多
+        "02": {"manju-02-asset.md"},                             # 规格与工作流文档 100% 同一份
+                                                                 # → 移植型冗余；且代码强制一致性
+        "03": {"manju-storyboard-director.md"},
+        "04": {"manju-04-video.md"},                             # 无规格，只有联动型
+        "05": {"manju-suno-lyric-master.md",                     # 写歌
+               "manju-audio-tuning-master.md"},                  # 声线/环境声/Foley/调音（与写歌互斥）
+        "06": {"manju-06-compliance.md"},                        # 无规格，只有联动型
+    }
+    print()
+    print("── ⭐ 自动入口必须是名册里登记的那几个 ──")
+    check(f"覆盖模块 00–06（实测 {sorted(modules)}）",
+          sorted(modules) == [f"0{i}" for i in range(7)], str(sorted(modules)))
+    for mod in sorted(modules):
+        actual = {n for n, m in modules[mod] if m == "agentic"}
+        want = EXPECTED_AUTO.get(mod, set())
+        extra, missing = actual - want, want - actual
+        check(f"模块 {mod}：自动入口 = 名册（{len(want)} 个）", not extra and not missing,
+              f"多出 {sorted(extra)}；缺失 {sorted(missing)}")
+    # 名册里不得出现不存在的文件（防"名册过时"变成静默放行）
+    all_names = {p.name for p in files}
+    ghost = {n for s in EXPECTED_AUTO.values() for n in s} - all_names
+    check("名册里的 agent 都真实存在", not ghost, str(sorted(ghost)))
+
+    print()
+    print("  模块 ｜ 自动可调用（名册）                ｜ 手动（不参与自动）")
+    print("  ─────┼──────────────────────────────────────┼──────────────────────")
+    for mod in sorted(modules):
+        a = sorted(n for n, m in modules[mod] if m == "agentic")
+        h = sorted(n for n, m in modules[mod] if m != "agentic")
+        print(f"   {mod}  ｜ {'、'.join(x.replace('manju-', '') for x in a) or '（⚠️ 无）':36s} ｜ "
+              f"{'、'.join(x.replace('manju-', '') for x in h) or '—'}")
 
     print()
     print("=" * 66)
