@@ -977,13 +977,18 @@ REQUIRED_FILES = [
 
 # 工作区级素材（在技能库目录**之外**）——用户的原始规格来源，最不该丢
 # 注意：若整个技能库被拷到别处（data/ 不存在），本项自动跳过并提示，不算失败
+# ⚠️ 用**通配模式**而不是精确文件名 —— 本检查的目的是「**防丢内容**」，
+#    不是「防改名」。实测（2026-09-26）：用户把
+#    `AI漫剧服化道智能体_FULL_PORTABLE_AGENT_SPEC_V2.md` 重写并改名为
+#    `AI漫剧服化道智能体_完整迁移配置.md`，精确匹配就**误报"被误删"**。
+#    这类"名字会演进"的素材，用前缀 + `*` 才既挡得住真丢失、又不拦合理改名。
 REQUIRED_WORKSPACE_FILES = [
-    "AI漫剧服化道智能体_FULL_PORTABLE_AGENT_SPEC_V2.md",
-    "AI漫剧资产库角色道具｜完整智能体迁移配置.md",
-    "AI剧本创作｜2分钟AI漫剧工业化导演与爆款编剧智能体完整迁移版.md",
-    "Suno_歌词大师｜完整智能体迁移配置.md",
-    "分镜导演助手｜完整智能体迁移配置_Markdown.md",
-    "调音大师班｜完整智能体迁移配置_Markdown.md",
+    "AI漫剧服化道智能体*",
+    "AI漫剧资产库角色道具*",
+    "AI剧本创作*",
+    "Suno_歌词大师*",
+    "分镜导演助手*",
+    "调音大师班*",
 ]
 
 # 目录最小文件数（防批量误删）
@@ -1327,13 +1332,14 @@ def check_assets(files):
     for _dp, _dns, _fns in os.walk(WORKSPACE):
         _dns[:] = [d for d in _dns if d not in SKIP_DIRS and not d.startswith(".")]
         names.update(_fns)
+    import fnmatch
     for req in REQUIRED_WORKSPACE_FILES:
-        if req not in names:
+        if not any(fnmatch.fnmatch(n, req) for n in names):
             failures.append({
                 "rule": "原始规格缺失",
                 "file": req,
                 "line": 0,
-                "text": f"整个工作区都未搜到该原始规格（是否被误删？）",
+                "text": "整个工作区都未搜到匹配该模式的原始规格（是否被误删？）",
                 "should_be": "恢复该文件（放在 data/ 或 智能体搭建参考md/ 均可）",
             })
     return failures

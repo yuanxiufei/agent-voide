@@ -70,9 +70,20 @@ def main() -> int:
     linked = [p for p in files if re.match(r"^manju-0\d-", p.name)]
     ported = [p for p in files if p not in linked]
     modules: dict[str, list[tuple[str, str]]] = {}      # 模块号 → [(agent 文件, agentMode)]
+
+    # ⭐ 载入生成器，用于**重算**移植型内容（见下"逐字一致"断言）
+    import importlib.util
+    _spec = importlib.util.spec_from_file_location("_manju_build", AG / "_build.py")
+    BUILD = importlib.util.module_from_spec(_spec)
+    _spec.loader.exec_module(BUILD)
+    by_name = {it["name"]: it for it in BUILD.SOURCES}
     check(f"联动型子智能体 {len(linked)} 个（期望 7：00–06）", len(linked) == 7, str(len(linked)))
     check(f"移植型子智能体 {len(ported)} 个（期望 6：参考 md 逐字移植）",
           len(ported) == 6, str(len(ported)))
+    # ⭐ 无孤儿：每个 .md 要么是联动型，要么在生成器的 SOURCES 里（否则"无源可再生成"）
+    orphans = [p.name for p in files
+               if p not in linked and p.stem not in by_name]
+    check("无孤儿生成物（每个移植型都能追溯到 SOURCES）", not orphans, str(orphans))
 
     # 工作流全部 .md（判"歧义"用）
     # ⚠️ 统一转 `/` —— Windows 上 `Path` 给 `\`，直接拿 `/` 匹配会**全部落空**
@@ -161,6 +172,17 @@ def main() -> int:
             check("正文有标题（规格原文被完整搬运）",
                   any(l.startswith("# ") for l in body.splitlines()))
             check(f"正文规模合理（> 5000 字符，实测 {len(body)}）", len(body) > 5000)
+
+            # ⭐⭐ 生成物必须与「按源规格**重算**的结果」逐字一致。
+            #   抓两类**都不会报错**的静默问题：
+            #     ① 改了源规格却忘了重跑 `_build.py` → 部署的 agent 是旧规则；
+            #     ② 有人手改了生成物 → 下次生成会被覆盖，改动**静默丢失**。
+            it = by_name.get(p.stem)
+            if it:
+                want, _, _ = BUILD.render(it)
+                check("生成物 == 按源规格重算（逐字）",
+                      t.replace("\r\n", "\n") == want,
+                      "不一致 → 跑 `python .codebuddy/agents/_build.py` 重新生成")
             check("正文未夹入本仓库专属路径（移植型应自包含）",
                   "AI漫剧智能体工作流" not in body)
 

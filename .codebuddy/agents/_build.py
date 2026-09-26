@@ -53,10 +53,22 @@ SOURCES: list[dict[str, str]] = [
         "tools": "read_file, write_to_file, replace_in_file, search_file, search_content, list_dir",
         "module": "01", "mode": "agentic",
     },
+    # ⚠️ **本行的来由**（值得记，因为判据变过一次）：
+    #    · 规格**旧版**（`…_FULL_PORTABLE_AGENT_SPEC_V2.md`）与工作流
+    #      `02-服化道/00-主控智能体.md` 曾**100% 同一份**（滑窗互含率 100%/100%）
+    #      → 当时判定"再生成一份内联副本 = 同一知识两处维护"，**故不移植**。
+    #    · 2026-09-26 用户**重写并改名**为 `AI漫剧服化道智能体_完整迁移配置.md`
+    #      （2093 → 2028 行；与工作流 02 的**主控与全部 23 份规则**互含率均为 **0.0%**）
+    #      → **不再是副本，而是独立内容** ⇒ **判据失效、重新移植**。
+    #    ⚠️ 教训：**判据依赖的事实会变**（源文件一更新，结论就得重算）。
+    #       故把"为什么"写在这里，而不是只留一个结果。
+    #    ⚠️ 仍设 `manual`：模块 02 的自动入口留给 `manju-02-asset` ——
+    #       它是**唯一能"用代码强制"一致性**的（ID / 版本 / Gate / 参考图链 / 漂移），
+    #       而本规格只能"描述"这些规则。**待用户确认哪份更权威后可再调**。
     {
-        "src": "AI漫剧服化道智能体_FULL_PORTABLE_AGENT_SPEC_V2.md",
+        "src": "AI漫剧服化道智能体_完整迁移配置.md",
         "name": "manju-costume-prop-engine",
-        "desc": "AI 漫剧服化道引擎（FULL PORTABLE AGENT SPEC V2.0）- 当需要把小说 / 剧本**视觉化**成世界观、角色三视图、服装、道具、场景、表情、动作资产时使用，覆盖锁定系统、局部修改、版本控制、一致性检查与中英双语提示词。例：「女刺客，黑衣，赛博朋克」「给这个角色出三视图」「只改她的发色」。产出视觉资产 + 一致性锁定 + 双语提示词。",
+        "desc": "AI 漫剧服化道引擎（完整迁移配置）—— 当需要把小说 / 剧本视觉化成**世界观 + 角色 + 服装 + 道具 + 场景**资产时使用，覆盖固定模块结构、图像生成标准、标准三视图模板、人物一致性规则、色彩与材质系统、时代一致性、双语规则、四套 Prompt 模板（角色 / 服装 / 道具 / 场景）、Negative 规则、视觉 Bible 模板与最终质量检查清单。例：「女刺客，黑衣，赛博朋克」「给这个角色出三视图」「按我这段小说出全套服化道」。产出视觉 Bible + 资产设定 + 提示词 + 图像。",
         "tools": "read_file, write_to_file, replace_in_file, search_file, search_content, list_dir, image_gen",
         "module": "02", "mode": "manual",
     },
@@ -103,7 +115,15 @@ def yaml_value(v: str) -> str:
     return v
 
 
-def build_one(item: dict, preview: bool) -> tuple[str, int, int]:
+def render(item: dict) -> tuple[str, int, int]:
+    """纯函数：按声明**算出**该智能体的完整文件内容 → `(内容, 正文字符数, 标题数)`。
+
+    ⭐ 单独抽出来是为了让 **校验器复用同一份渲染逻辑** —— `tests/test_agents.py`
+    会用它重算一遍并与磁盘上的文件比对，于是能同时抓出两类静默问题：
+      · **改了规格却忘了重生成**（源变了、生成物没变）
+      · **手改了生成物**（生成物变了、源没变）
+    这两件事都不会让任何东西报错，但会让"规则"与"实际部署的 agent"不一致。
+    """
     src = SRC_DIR / item["src"]
     if not src.is_file():
         raise FileNotFoundError(f"源规格不存在：{src}")
@@ -115,12 +135,12 @@ def build_one(item: dict, preview: bool) -> tuple[str, int, int]:
 
     # 出处注记放**正文最前**（两行）—— 便于追源，且让"这个 agent 是自动还是手动"**可见**。
     # ⚠️ 「服务模块」与「模式」写成**机器可读**的形式（`服务模块 **01** ｜ agentMode: manual），
-    #    供 `tests/test_agents.py` 校验「**每个模块的自动可调用 agent 恰好一个**」——
-    #    不另立一张映射表（那会和工作流的"单一权威"原则冲突，且必然漂移）。
+    #    供 `tests/test_agents.py` 校验「**自动入口名册**」——
+    #    不另立一张映射表（那会与"单一权威"冲突，且必然漂移）。
     manual = item["mode"] == "manual"
     tail = ("（**手动选** —— 同模块已有一个自动可调用的 agent，两者职责重叠，"
             "同时参与自动调用会让同一句话走两条路、**行为不确定**）"
-            if manual else "（**自动可调用** —— 本模块唯一的自动入口）")
+            if manual else "（**自动可调用**）")
     prov = (f"> 生成自 `智能体搭建参考md/{src.name}`"
             f"（由 `.codebuddy/agents/_build.py` 逐字移植）。**改规则请改源规格后重新生成。**\n"
             f"> 服务模块 **{item['module']}** ｜ `agentMode: {item['mode']}`{tail}\n\n")
@@ -129,11 +149,15 @@ def build_one(item: dict, preview: bool) -> tuple[str, int, int]:
     vals.update({"agentMode": item["mode"], "enabled": "true",
                  "enabledAutoRun": "true"})
     fm = "\n".join(f"{k}: {yaml_value(str(vals[k]))}" for k in FRONT_KEYS)
-    out = f"---\n{fm}\n---\n\n{prov}{body}"
-    dest = HERE / (item["name"] + ".md")
+    return (f"---\n{fm}\n---\n\n{prov}{body}",
+            len(body), len([l for l in lines if l.startswith("#")]))
+
+
+def build_one(item: dict, preview: bool) -> tuple[str, int, int]:
+    out, n, secs = render(item)
     if not preview:
-        dest.write_text(out, encoding="utf-8", newline="\n")
-    return item["name"], len(body), len([l for l in lines if l.startswith("#")])
+        (HERE / (item["name"] + ".md")).write_text(out, encoding="utf-8", newline="\n")
+    return item["name"], n, secs
 
 
 def main() -> int:
@@ -157,7 +181,7 @@ def main() -> int:
     print(f"  合计正文 {total} 字符（≈ {total / 1024:.0f} KB）")
     auto = sum(1 for it in SOURCES if it["mode"] == "agentic")
     print(f"  自动可调用 {auto} 个 · 手动 {len(SOURCES) - auto} 个"
-          f"（自动的需与联动型一起满足「每模块恰好一个」，见 test_agents.py）")
+          f"（自动入口须与联动型一起对上「自动入口名册」，见 test_agents.py）")
     print(f"  校验：python AI漫剧智能体工作流/07-智能体运行时/tests/test_agents.py")
     return 0
 

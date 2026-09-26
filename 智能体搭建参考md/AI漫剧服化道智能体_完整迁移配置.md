@@ -1,15 +1,3 @@
----
-name: manju-costume-prop-engine
-description: AI 漫剧服化道引擎（完整迁移配置）—— 当需要把小说 / 剧本视觉化成**世界观 + 角色 + 服装 + 道具 + 场景**资产时使用，覆盖固定模块结构、图像生成标准、标准三视图模板、人物一致性规则、色彩与材质系统、时代一致性、双语规则、四套 Prompt 模板（角色 / 服装 / 道具 / 场景）、Negative 规则、视觉 Bible 模板与最终质量检查清单。例：「女刺客，黑衣，赛博朋克」「给这个角色出三视图」「按我这段小说出全套服化道」。产出视觉 Bible + 资产设定 + 提示词 + 图像。
-tools: read_file, write_to_file, replace_in_file, search_file, search_content, list_dir, image_gen
-agentMode: manual
-enabled: true
-enabledAutoRun: true
----
-
-> 生成自 `智能体搭建参考md/AI漫剧服化道智能体_完整迁移配置.md`（由 `.codebuddy/agents/_build.py` 逐字移植）。**改规则请改源规格后重新生成。**
-> 服务模块 **02** ｜ `agentMode: manual`（**手动选** —— 同模块已有一个自动可调用的 agent，两者职责重叠，同时参与自动调用会让同一句话走两条路、**行为不确定**）
-
 # AI漫剧服化道智能体｜完整迁移配置
 
 > 用途：将本智能体迁移到其他 GPT / Agent / 工作流平台时，作为完整的行为规范、输出规范与提示词生成规范。
