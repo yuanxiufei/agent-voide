@@ -23,6 +23,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -36,7 +37,7 @@ from . import lock
 from .image_provider import get_provider, png_size
 from .llm_client import LLMClient
 from .prompt_engine import build_prompts, name_suppressed_note
-from .router import route
+from .router import QUERY_WORDS, route
 from .rule_source import RuleSource
 from .schema import AssetCard, parse_id
 
@@ -71,6 +72,126 @@ def _type_from_object(text: str) -> str:
         if any(w in text for w in words):
             return t
     return ""
+
+
+# ─────────────────────────────────────────────────────────────
+# 查询的**过滤词**抽取（`_query` 用）
+# ─────────────────────────────────────────────────────────────
+# ⚠️ 原实现是**一句话里 8 个写死的词**：
+#       ("机械", "废土", "赛博", "银发", "长发", "废墟", "霓虹", "指挥中心")
+#    于是「有哪些旗袍」「查一下密码本」「列出所有民国的东西」——
+#    `keyword` 抽成空串 → **静默返回全部**，而且**一个字都不提示**（CLI 也不显示
+#    过滤条件，见 `cmd_ask`）。两个错叠在一起：**该过滤的没过滤 + 看不出来**。
+#    那 8 个词也全是废土/赛博味 —— 与 `NPC_POOLS`/`SCENE_POOLS` 同一类问题：
+#    **把某个题材的具体值当成通用值**。
+#
+# ⭐ 现改为**两级**（与 `prompt_engine.tr()` 的内置/外挂同构）：
+#    ① **用户原话**：从「所有/列出/有哪些/查一下…」后面**按结构**取出名词短语，
+#       并去掉尾部的**类型词**（「银发**角色**」→「银发」）—— 不依赖任何词表；
+#    ② **词表增强**：若①里含项目词表已知的值（题材词/材质/颜色/发型/服装/道具/场所），
+#       优先用它 —— 因为**卡片 JSON 里真的会出现这些值**，命中率更高。
+#    都没抽到 → 空串（**不编**），并由调用方**明说**"本次未加过滤"。
+#
+# ⭐ 注意 `AssetManager.list_assets(keyword=…)` 是**对整张卡片的 JSON 做子串搜索**，
+#    所以过滤词**不必在项目词表里** —— 用户说什么就用什么（这才是"任何一部小说都行"）。
+
+# 「所有 / 列出 / 有哪些 / 查一下 …」+ 宾语
+# ⚠️ 两个坑（都是自检时抓到的，故留下记录）：
+#   ① 触发词要能**连用**（`(?:…)+`）—— 「列出**所有**银发角色」里「列出」与「所有」
+#      连着出现；只匹配一个的话宾语会变成「所有银发角色」，「所有」被当成过滤词；
+#   ② 句中**只剩触发词**时（「列出所有」，后面没宾语）**不能**把触发词当过滤词 ——
+#      否则会拿「所有」去搜卡片 → 0 条。故 `_QUERY_WORDS` 复用为排除表。
+#   ③ 词表**单一来源**：正则与排除表都从 `_QUERY_WORDS` 生成，避免两处漂移；
+#      且**长词在前**（`搜一下` 必须在 `搜` 之前，否则会被拆成「搜」+「一下」）。
+# ⭐ **单一来源**：抽取用的触发词 = `router.QUERY_WORDS`（路由判"这是不是查询"的同一张表）
+#    + `所有/全部` 这两个**修饰词**。
+#    ⚠️ 它们**不进** `router.QUERY_WORDS` —— 那是路由判定，`any(w in text)` 且**覆盖**
+#       create/modify，把「所有」放进去会让「生成所有角色的三视图」变成查询。
+_QUERY_WORDS = (*QUERY_WORDS, "所有", "全部")
+# 长度降序 → **长词优先**（「搜一下」必须先于「搜」，否则会被拆成「搜」+「一下」）
+_TRIG_ALT = "|".join(sorted(set(_QUERY_WORDS), key=len, reverse=True))
+
+_QUERY_TRIG = re.compile(
+    r"(?:(?:" + _TRIG_ALT + r")\s*的?\s*)+"
+    r"([^\s，,。；;！!？?、：:（）()\[\]【】\"'“”]{2,14})")
+
+# ⚠️ 只去**通用类目词**，**不去具体物件名** —— 它们看着像"类型"，其实是**过滤词**：
+#    「有哪些**盔甲**」要的是盔甲（不是列出所有服装）。
+#    故 `_OBJECT_TYPE` 里那些具体名词（刀/枪/剑/盔甲/风衣/长袍…）**不在**本表内。
+_TAIL_WORDS = ("角色", "人物", "主角", "配角", "NPC", "道具", "装备", "武器",
+               "服装", "衣服", "场景", "环境", "建筑", "表情", "表情集",
+               "动作", "姿势", "姿态", "动作集", "资产", "卡片",
+               "长什么样", "是什么样的", "什么样", "的清单", "清单")
+
+_QV: list[str] | None = None
+
+
+def _query_values() -> list[str]:
+    """项目词表里**会出现在卡片 JSON 里的值**，按长度降序（最长优先）。
+
+    ⚠️ 一律用 `getattr(…, default)` 取表 —— 任何一张表将来改名/删除都不该让
+    查询功能崩掉（这类"改一处崩另一处"本项目踩过多次）。
+    """
+    global _QV
+    if _QV is None:
+        vals: set[str] = set()
+        from . import generic, nl_parser as _nlp
+        for name in ("MATERIALS", "COLORS", "HAIR_WORDS", "PROP_WORDS",
+                     "COSTUME_WORDS", "EQUIP_WORDS", "SCENE_WORDS"):
+            for v in getattr(_nlp, name, ()) or ():
+                if isinstance(v, str) and 2 <= len(v) <= 8:
+                    vals.add(v)
+        for aliases in (getattr(_nlp, "WORLD_STYLES", {}) or {}).values():
+            for v in aliases or ():
+                if isinstance(v, str) and 2 <= len(v) <= 8:
+                    vals.add(v)
+        for pair in getattr(generic, "ERA_WORDS", ()) or ():
+            if pair and isinstance(pair[0], str) and 2 <= len(pair[0]) <= 8:
+                vals.add(pair[0])
+        _QV = sorted(vals, key=len, reverse=True)
+    return _QV
+
+
+def _strip_type_tail(q: str) -> str:
+    """去掉宾语尾部的**通用类目词** → 「银发角色」= 「银发」。
+
+    · 整串**就是**一个类目词（「有哪些资产」「有哪些角色」）→ 返回空串：
+      那是**按类型**列出，类型已由 `_type_from_object` 定好了，不该再拿「角色」
+      去搜卡片内容（那会莫名其妙 0 条）。
+    · **具体物件名不去** —— 「有哪些**盔甲**」要的就是盔甲（见 `_TAIL_WORDS` 说明）。
+    · 非整串命中时，只在"去掉后仍剩 ≥2 字"时才去，免得把词抹没。
+    """
+    q = (q or "").strip("的 ")
+    tails = sorted(_TAIL_WORDS, key=len, reverse=True)
+    for w in tails:
+        if q == w:
+            return ""
+    for w in tails:
+        if q.endswith(w):
+            rest = q[: -len(w)].strip("的 ")
+            if len(rest) >= 2:
+                return rest
+    return q
+
+
+def _search_term(text: str) -> tuple[str, str]:
+    """抽查询的过滤词 → `(词, 依据说明)`；抽不到返回 `("", "")`（**不编**）。"""
+    m = _QUERY_TRIG.search(text or "")
+    q = _strip_type_tail(m.group(1)) if m else ""
+    # ⚠️ 「列出所有」（后面没宾语）会被抽出「所有」—— 那是**触发词**，不是过滤词。
+    #    不排除的话会拿它去搜卡片内容 → 0 条（还看不出来为什么）。
+    if q in _QUERY_WORDS:
+        q = ""
+    if q:
+        for v in _query_values():
+            if v in q:
+                return v, f"取自你原话的「{v}」"
+        return q, "取自你的原话"
+    # 没给具体宾语 → 退到**词表**里找（旧行为的推广：不再只有那 8 个词）
+    for v in _query_values():
+        if v in (text or ""):
+            return v, f"词表命中「{v}」"
+    return "", ""
 
 
 def _set_pair(vd, fld: str, cn_value: str) -> None:
@@ -758,11 +879,9 @@ class DramaAssetAgent:
     # ── 查询 ──
 
     def _query(self, text: str, asset_type: str) -> dict:
-        keyword = ""
-        for k in ("机械", "废土", "赛博", "银发", "长发", "废墟", "霓虹", "指挥中心"):
-            if k in text:
-                keyword = k
-                break
+        # ⭐ 过滤词走**两级抽取**（用户原话 → 词表增强），见 `_search_term`。
+        #    ⚠️ 原实现只有 8 个写死的词，抽不到就**静默返回全部**。
+        keyword, why = _search_term(text)
         # 「列出所有武器 / 所有场景 / 所有表情集」这类**按对象名查**。
         # ⚠️ 原版只认武器词并**无条件覆盖**路由结果 → 「查看角色的武器」会变成只查道具。
         #    现在按对象词推断，且**只在能推断出类型时才覆盖**。
@@ -770,7 +889,13 @@ class DramaAssetAgent:
         if hint:
             asset_type = hint
         cards = self.am.list_assets(asset_type=asset_type, keyword=keyword)
+        # ⚠️ 过滤条件**必须回传并展示** —— 否则"没抽到词 → 列出全部"用户看不见，
+        #    会以为库里就这么多（本项目最忌的失败形态：**静默退化**）。
+        note = (f"过滤词「{keyword}」（{why}）" if keyword else
+                "未从输入里识别出过滤词 —— 本次是**按类型列出全部**；"
+                "想过滤请写明对象，如「有哪些旗袍」「列出所有民国角色」")
         return {"operation": "query", "asset_type": asset_type, "keyword": keyword,
+                "keyword_note": note,
                 "count": len(cards),
                 "items": [{"id": c.id, "name": c.name, "type": c.type,
                            "world": c.world, "version": c.version,

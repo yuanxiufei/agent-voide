@@ -105,12 +105,20 @@ def cmd_ask(a: argparse.Namespace) -> int:
     hr("🧭 路由")
     res = ag.handle(text, asset_type=a.type, generate=(not a.no_image))
     r = res.get("route", {})
-    print(f"  意图：{r.get('operation')}   资产类型：{r.get('asset_type')}"
-          f"   解析器：{res.get('parser', r.get('source'))}")
-    print(f"  依据：{r.get('reason')}")
+    # ⚠️ **查询结果没有 `route` 字段**（`_query` 返回的就是操作结果本身）→
+    #    照旧读 `r` 会打印「意图：None 资产类型：None 解析器：None」，
+    #    看着像出了错（端到端实测看到）。故查询时改从结果里取。
+    print(f"  意图：{r.get('operation') or res.get('operation')}"
+          f"   资产类型：{r.get('asset_type') or res.get('asset_type')}"
+          f"   解析器：{res.get('parser', r.get('source')) or 'rule'}")
+    print(f"  依据：{r.get('reason') or '按类型 + 过滤词查询资产库'}")
 
     if res.get("operation") == "query":
         hr(f"📚 查询结果：{res['count']} 项")
+        # ⭐ 过滤条件**必须显示** —— 原来只有 8 个写死的词能生效，抽不到就静默
+        #    列出全部，而用户从输出上**看不出"过滤没生效"**（本次修的就是这个）。
+        if res.get("keyword_note"):
+            print(f"  {res['keyword_note']}")
         for it in res["items"]:
             print(f"  {it['id']}  {it['name']}  [{it['type']}]  {it['world']}"
                   f"  {it['version']}  {it['status']}")

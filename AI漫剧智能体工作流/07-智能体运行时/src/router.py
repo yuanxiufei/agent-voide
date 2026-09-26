@@ -17,7 +17,17 @@ from dataclasses import dataclass, field
 
 from .nl_parser import ParsedInput, parse as rule_parse
 
-QUERY_WORDS = ["列出", "查找", "查询", "看看", "有哪些", "list", "show", "find"]
+# ⚠️ 这张表是**查询判定的唯一来源**（`agent._search_term` 也用它抽过滤词 ——
+#    两处各存一份必然漂移，那是本项目反复强调的「同一知识两处维护」）。
+#    实测踩到：原表**没有「查看」**，于是
+#        `python main.py "查看 CHR_001"` → 意图判成 **create** →
+#        真的建了一张名叫「查看 CHR_001」的垃圾资产（而不是查 CHR_001）。
+#    ⭐ 只放**明确表示"要看/要查"的动词**；`所有/全部` 这类**修饰词不得入表** ——
+#       本判定是 `any(w in text)` 且**覆盖** create/modify，加了会把
+#       「生成所有角色的三视图」这类创建请求误判成查询。
+QUERY_WORDS = ["列出", "列一下", "查找", "查一下", "查询", "查看", "看看",
+               "有哪些", "有那些", "找出", "找一下", "搜一下", "搜",
+               "list", "show", "find"]
 MODIFY_WORDS = ["改成", "换成", "改为", "变成", "增加", "加上", "去掉", "删除"]
 
 ROUTER_SYSTEM = """你是 AI 漫剧资产库的指令路由器。判断用户想做什么，只返回 JSON：

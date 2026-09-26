@@ -267,6 +267,85 @@ def _run(tmp: Path) -> int:
           all(w in _g.PLACE_SUFFIX for w in "铺栈驿"))
 
     print()
+    print("── ⑮ 查询过滤词：**结构抽取**，不再是 8 个写死的词 ──")
+    # ⚠️ 原实现只认 ("机械","废土","赛博","银发","长发","废墟","霓虹","指挥中心")
+    #    这 8 个词 —— 表外的对象名（旗袍/密码本）抽不到 → **静默返回全部**，
+    #    而 CLI 连"过滤词是什么"都不显示。两个错叠在一起，用户看不出来。
+    from src import agent as _ag
+    term = _ag._search_term
+    for text, want in (("有哪些旗袍", "旗袍"),
+                       ("查一下密码本", "密码本"),
+                       ("列出所有银发角色", "银发"),
+                       ("列出所有民国角色", "民国"),
+                       ("有哪些盔甲", "盔甲"),
+                       ("查看 CHR_001", "CHR_001")):
+        got = term(text)[0]
+        check(f"「{text}」→ 过滤词「{want}」", got == want, f"实际「{got}」")
+    check("⭐ 宾语里的「的」不吃掉中心语（「有哪些银发的角色」→「银发」）",
+          term("有哪些银发的角色")[0] == "银发", term("有哪些银发的角色")[0])
+
+    check("去尾只去**通用类目**，不去具体物件（「盔甲」是真过滤词）",
+          _ag._strip_type_tail("银发角色") == "银发"
+          and _ag._strip_type_tail("盔甲") == "盔甲"
+          and _ag._strip_type_tail("资产") == "",
+          f"{_ag._strip_type_tail('银发角色')}/"
+          f"{_ag._strip_type_tail('盔甲')}/{_ag._strip_type_tail('资产')}")
+    check("⭐ 触发词本身不算过滤词（「列出所有」→ 空，**不拿「所有」去搜卡片**）",
+          term("列出所有")[0] == "", term("列出所有")[0])
+    check("纯类目词不算过滤词（「有哪些资产」→ 按类型列全部）",
+          term("有哪些资产")[0] == "", term("有哪些资产")[0])
+    check("抽不到就返回空（**不编**）", term("给我看看") == ("", ""),
+          str(term("给我看看")))
+
+    # ⚠️⚠️ **教训：测试要测在真正起作用的层上。**
+    #    上面「查看 CHR_001 → CHR_001」抽得**完全正确**，但端到端跑出来：
+    #        $ python main.py "查看 CHR_001"
+    #          意图：create  →  🎨 CHR_002 ｜ 查看 CHR_001      ← 建了一张垃圾资产！
+    #    因为 `router.QUERY_WORDS` 里**没有「查看」** → 路由判成 create →
+    #    `_query` **根本没被调用**。抽取函数的单测全绿，也拦不住这个。
+    from src import router as _rt
+    for t in ("查看 CHR_001", "查一下密码本", "有哪些旗袍", "列出所有",
+              "找出银发的角色"):
+        _op = _rt.route(t)[0].operation
+        check(f"路由：`{t}` → query（不再误判成 create）", _op == "query", _op)
+    check("⭐ 抽取与路由**共用同一张动词表**（不得各存一份，否则必漂移）",
+          set(_rt.QUERY_WORDS) <= set(_ag._QUERY_WORDS))
+    check("⚠️「所有 / 全部」**不得**进路由表 —— 本判定会**覆盖** create/modify，"
+          "放进去会让创建请求被误判成查询",
+          not ({"所有", "全部"} & set(_rt.QUERY_WORDS)))
+    check("创建请求仍判 create（没被查询动词误伤）",
+          _rt.route("生成所有角色的三视图")[0].operation != "query",
+          _rt.route("生成所有角色的三视图")[0].operation)
+
+    # ⭐ 核心要求：**过滤条件必须可见** —— 否则"没抽到词 → 列出全部"用户看不见
+    class _Q:
+        seen = ("", "")
+
+        def __init__(self):
+            outer = self
+
+            class _AM:
+                @staticmethod
+                def list_assets(asset_type="", keyword=""):
+                    _Q.seen = outer.seen = (asset_type, keyword)
+                    return []
+
+            self.am = _AM
+
+        _query = _ag.DramaAssetAgent._query
+
+    q = _Q()
+    res = q._query("有哪些旗袍", "character")
+    check("`_query` 回传**过滤词与依据**", res.get("keyword") == "旗袍"
+          and "旗袍" in res.get("keyword_note", ""), str(res.get("keyword_note")))
+    check("关键词真的传给了 `list_assets`", q.seen[1] == "旗袍", str(q.seen))
+    res2 = q._query("列出所有", "character")
+    check("抽不到过滤词时**明说**（不静默列全部）",
+          res2.get("keyword") == ""
+          and "未从输入里识别出过滤词" in res2.get("keyword_note", ""),
+          str(res2.get("keyword_note")))
+
+    print()
     print("=" * 66)
     if FAIL:
         print(f"❌ 失败 {len(FAIL)} 项 / 共 {len(PASS) + len(FAIL)} 项：")
