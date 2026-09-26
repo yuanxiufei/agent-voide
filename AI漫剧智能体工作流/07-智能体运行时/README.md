@@ -469,34 +469,58 @@ cp .env.example .env      # 填入 Key（.env 已在 .gitignore）
 
 ## 八、项目级子智能体（`.codebuddy/agents/`）
 
-工作流定义的是**七个流程 agent**（00–06），而 CodeBuddy 也需要知道"怎么用这个仓库"。
-两者之间用 **7 个项目级子智能体**接上（仓库根 `.codebuddy/agents/manju-*.md`）：
+仓库根 `.codebuddy/agents/` 下有 **13 个子智能体，分两种形态**。
+它们**不是替代关系**，各管一段：
 
-| 文件 | name | 对应模块 |
+### 形态一：**联动型**（7 个，`manju-0N-*`）—— 与本仓库的代码联动
+
+工作流定义的是**七个流程 agent**（00–06），而 CodeBuddy 也需要知道"怎么用这个仓库"。
+两者之间用这 7 个接上：
+
+| 文件 | 对应模块 | 特点 |
 |---|---|---|
-| `manju-00-orchestrator.md` | `manju-00-orchestrator` | 00 全流程总控 |
-| `manju-01-script.md` | `manju-01-script` | 01 剧本文本 |
-| `manju-02-asset.md` | `manju-02-asset` | 02 服化道 |
-| `manju-03-storyboard.md` | `manju-03-storyboard` | 03 分镜导演 |
-| `manju-04-video.md` | `manju-04-video` | 04 视频生成 |
-| `manju-05-audio.md` | `manju-05-audio` | 05 音乐音频 |
-| `manju-06-compliance.md` | `manju-06-compliance` | 06 合规审核 |
+| `manju-00-orchestrator.md` | 00 全流程总控 | 路由 / 交接校验 / 门禁 |
+| `manju-01-script.md` | 01 剧本文本 | |
+| `manju-02-asset.md` | 02 服化道 | ⭐ 确定性步骤**全调 07 的代码**，**不给写工具** |
+| `manju-03-storyboard.md` | 03 分镜导演 | |
+| `manju-04-video.md` | 04 视频生成 | |
+| `manju-05-audio.md` | 05 音乐音频 | |
+| `manju-06-compliance.md` | 06 合规审核 | |
+
+### 形态二：**移植型**（6 个）—— **自包含**，不依赖本仓库
+
+来自仓库根 `智能体搭建参考md/` 的 6 份智能体规格，**逐字移植**：
+
+| 文件 | 源规格 |
+|---|---|
+| `manju-script-creator.md` | AI剧本创作（2 分钟工业化导演 × 爆款编剧） |
+| `manju-costume-prop-engine.md` | AI漫剧服化道 FULL PORTABLE AGENT SPEC V2.0 |
+| `manju-asset-library.md` | AI漫剧资产库角色道具 |
+| `manju-suno-lyric-master.md` | Suno 歌词大师 |
+| `manju-storyboard-director.md` | 分镜导演助手【先出分镜再出图】 |
+| `manju-audio-tuning-master.md` | 调音大师班 |
+
+重新生成：`python .codebuddy/agents/_build.py`（规格改了重跑即可，不用手改生成物）。
 
 ### ⭐ 裂解原则：**同一份规格，两种加载方式**
 
 原始规格（`智能体搭建参考md/` 6 份）是**给"没有工具的模型"**写的 —— 所以它必须
 把规则**全文内联**。而子智能体**有文件工具**，于是：
 
-| 内容 | 给"没工具的模型"（07 的 runtime prompt） | ⭐ 给"有工具的 agent"（CodeBuddy 子智能体） |
+| 内容 | 移植型（自包含，13 个里的 6 个） | 联动型（与本仓库代码联动，7 个） |
 |---|---|---|
-| 角色 / 职责 / 交付 / 门禁 | 内联（短） | **内联**（短） |
-| 权威规则正文 | **内联原文**（模型读不到文件） | ⭐ **只给路径，让它自己读** |
-| 参考素材（长表/示例） | 只给目录 | 只给路径 |
-| ID 协议 / Gate / 漂移检测 | 内联（让模型"记得"） | ⭐ **调 `python main.py`**（代码判） |
+| 角色 / 职责 / 交付 / 门禁 | **内联**（短） | **内联**（短） |
+| 权威规则正文 | ⭐ **全文内联**（脱离本仓库也能跑） | ⭐ **只给路径，让它自己读** |
+| 参考素材（长表/示例） | 内联（随规格一起搬） | 只给路径 |
+| ID 协议 / Gate / 漂移检测 | 规格里怎么写就怎么写 | ⭐ **调 `python main.py`**（代码判） |
 
-> ⚠️ **为什么必须这样分**：本项目第一纪律是「规则**只读工作流，不复制**」。
-> 若把规则抄进子智能体的 System Prompt，就变成**同一知识两处维护** ——
+> ⚠️ **为什么联动型必须"只给路径"**：本项目第一纪律是「规则**只读工作流，不复制**」。
+> 若把规则抄进它的 System Prompt，就变成**同一知识两处维护** ——
 > 工作流一改，抄的那份就悄悄过时。
+>
+> ⚠️ **为什么移植型反而要"全文内联"**：它的目的就是**脱离本仓库独立可用**
+> （规格自己写着「适用：Custom GPT / Agent / System Prompt」）。
+> 两者**各有用途**：独立可用 vs 与本仓库代码联动。
 
 ### 校验（**路径唯一性**这一类坑）
 
